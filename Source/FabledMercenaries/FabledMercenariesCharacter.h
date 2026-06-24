@@ -47,6 +47,9 @@ public:
 	/** 마우스 휠로 줌 인/아웃 (양수 = 줌 인, 음수 = 줌 아웃) */
 	void ZoomCamera(float Value);
 
+	/** 카메라 패닝 (SpringArm 오프셋 변경, 캐릭터는 제자리) */
+	void PanCamera(FVector2D WorldDelta);
+
 private:
 
 	/** 줌 이동 속도 */

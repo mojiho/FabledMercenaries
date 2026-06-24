@@ -69,3 +69,18 @@ void AFabledMercenariesCharacter::ZoomCamera(float Value)
 	float NewLength = CameraBoom->TargetArmLength - (Value * ZoomSpeed);
 	CameraBoom->TargetArmLength = FMath::Clamp(NewLength, ZoomMin, ZoomMax);
 }
+
+void AFabledMercenariesCharacter::PanCamera(FVector2D Delta)
+{
+	// SpringArm의 회전만 변경 → 카메라가 캐릭터 중심으로 공전
+	// Delta.X : 좌우 (Yaw)
+	// Delta.Y : 위아래 (Pitch)
+	FRotator CurrentRot = CameraBoom->GetRelativeRotation();
+	CurrentRot.Yaw   += Delta.X;
+	CurrentRot.Pitch += Delta.Y;
+
+	// 너무 수직/수평까지 가지 않도록 Pitch 제한
+	CurrentRot.Pitch = FMath::Clamp(CurrentRot.Pitch, -80.f, -10.f);
+
+	CameraBoom->SetRelativeRotation(CurrentRot);
+}

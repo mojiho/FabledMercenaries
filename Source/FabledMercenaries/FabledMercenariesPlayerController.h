@@ -54,6 +54,21 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Input")
 	TObjectPtr<UInputAction> ZoomAction;
 
+	/** 우클릭 누름 상태 (드래그 시작/종료) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Input")
+	TObjectPtr<UInputAction> DragHoldAction;
+
+	/** 마우스 X/Y 이동량 (드래그 중일 때만 적용) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Input")
+	TObjectPtr<UInputAction> DragMoveAction;
+
+	/** 드래그 회전 감도 (마우스 1픽셀당 회전 도수) */
+	UPROPERTY(EditAnywhere, Category="Camera|Pan")
+	float DragPanSpeed = 0.3f;
+
+	/** 현재 우클릭 드래그 중인지 */
+	bool bIsDragging = false;
+
 	/** True if the controlled character should navigate to the mouse cursor. */
 	uint32 bMoveToMouseCursor : 1;
 
@@ -85,6 +100,11 @@ protected:
 
 	/** 줌 처리 */
 	void OnZoom(const FInputActionValue& Value);
+
+	/** 우클릭 드래그 시작/종료/이동 */
+	void OnDragStart();
+	void OnDragEnd();
+	void OnDragMove(const FInputActionValue& Value);
 
 	/** Helper function to get the move destination */
 	void UpdateCachedDestination();

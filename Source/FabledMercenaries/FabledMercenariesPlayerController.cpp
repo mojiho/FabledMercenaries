@@ -60,6 +60,12 @@ void AFabledMercenariesPlayerController::SetupInputComponent()
 
 			// 마우스 휠 줌
 			EnhancedInputComponent->BindAction(ZoomAction, ETriggerEvent::Triggered, this, &AFabledMercenariesPlayerController::OnZoom);
+
+			// 우클릭 드래그 패닝
+			EnhancedInputComponent->BindAction(DragHoldAction, ETriggerEvent::Started,   this, &AFabledMercenariesPlayerController::OnDragStart);
+			EnhancedInputComponent->BindAction(DragHoldAction, ETriggerEvent::Completed, this, &AFabledMercenariesPlayerController::OnDragEnd);
+			EnhancedInputComponent->BindAction(DragHoldAction, ETriggerEvent::Canceled,  this, &AFabledMercenariesPlayerController::OnDragEnd);
+			EnhancedInputComponent->BindAction(DragMoveAction, ETriggerEvent::Triggered, this, &AFabledMercenariesPlayerController::OnDragMove);
 		}
 		else
 		{
@@ -128,6 +134,32 @@ void AFabledMercenariesPlayerController::OnZoom(const FInputActionValue& Value)
 	if (AFabledMercenariesCharacter* Char = Cast<AFabledMercenariesCharacter>(GetPawn()))
 	{
 		Char->ZoomCamera(ZoomValue);
+	}
+}
+
+void AFabledMercenariesPlayerController::OnDragStart()
+{
+	bIsDragging = true;
+}
+
+void AFabledMercenariesPlayerController::OnDragEnd()
+{
+	bIsDragging = false;
+}
+
+void AFabledMercenariesPlayerController::OnDragMove(const FInputActionValue& Value)
+{
+	// 우클릭이 안 눌려있으면 무시
+	if (!bIsDragging) return;
+
+	// Value.Get<FVector2D>() : 마우스 X/Y 이동량 (이번 프레임 델타)
+	FVector2D Delta = Value.Get<FVector2D>();
+
+	if (AFabledMercenariesCharacter* Char = Cast<AFabledMercenariesCharacter>(GetPawn()))
+	{
+		// 마우스 오른쪽으로(Delta.X+) → 카메라 Yaw 회전
+		// 마우스 위로(Delta.Y+) → 카메라 Pitch 회전
+		Char->PanCamera(FVector2D(Delta.X * DragPanSpeed, Delta.Y * DragPanSpeed));
 	}
 }
 
