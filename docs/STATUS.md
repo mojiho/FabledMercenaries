@@ -1,7 +1,9 @@
 # Fabled Mercenaries — 진행 현황 & 다음 할 일 (STATUS)
 
 > 단일 "지금 어디까지 했고 다음에 뭐 할지" 참조. 최종 갱신: **2026-06-26**.
-> 관련 문서: 전투/클래스 설계 `combat_class_design.md`, P0 프로토타입 설계 `prototype_phase_p0_design.md`, 서버 설계 `server_technical_design_v2.md`.
+> 관련 문서: 전투/클래스 설계 `combat_class_design.md`, P0 프로토타입 설계 `prototype_phase_p0_design.md`, 서버 설계 `server_technical_design_v2.md`, **아트 파이프라인 `art_pipeline.md`**.
+>
+> 제약 메모: 1인 **프로그래머** — 코드/개발 시간 충분, **병목은 아트(특히 3D 모델링)**. 전략은 `art_pipeline.md` 참조(베이스 에셋+Mixamo+툰 셰이더+모듈러로 우회).
 
 ---
 
