@@ -52,5 +52,5 @@ private:
 	// 튜닝 상수(1차값 — P0에서 조정)
 	static constexpr float ISSUE_COST    = 1.0f;   // 명령 1회 발행 비용
 	static constexpr float EXEC_RATE     = 1.0f;   // execGauge 진행/초 (선/후딜 타이머 속도)
-	static constexpr float ATTACK_DAMAGE = 25.f;   // 1회 타격 데미지 (100hp = 4대)
+	static constexpr float CRIT_MULT     = 2.0f;   // 후면 크리 배율 (암살자는 후속에 더 크게)
 };

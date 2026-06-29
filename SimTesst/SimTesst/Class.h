@@ -20,18 +20,19 @@ struct ClassStats
 	bool ranged;			// 원거리 공격 가능 여부
 	float attackPreDelay;    // 선딜(윈드업/조준) 초
 	float attackPostDelay;   // 후딜(회복) 초
+	float attackDamage;      // 기본 공격 데미지
 };
 
 inline ClassStats GetClassStats(Class c)
 {
 	switch (c)
-	{                       //  이속   사거리 원거리 선딜  후딜
-	case Class::Warrior:  return { 300.f, 120.f, false, 0.4f, 0.2f };
-	case Class::Tanker:   return { 250.f, 120.f, false, 0.5f, 0.3f };
-	case Class::Mage:     return { 280.f, 600.f, false, 0.8f, 0.5f };  // 지팡이 기본=약한 근접, 화력은 스킬
-	case Class::Archer:   return { 340.f, 700.f, true,  1.3f, 0.4f };  // 조준
-	case Class::Assassin: return { 360.f, 120.f, false, 0.3f, 0.2f };  // 빠른 타격
-	default:              return { 300.f, 120.f, false, 0.4f, 0.2f };
+	{                       //  이속   사거리 원거리 선딜  후딜  뎀
+	case Class::Warrior:  return { 300.f, 120.f, false, 0.4f, 0.2f, 25.f };
+	case Class::Tanker:   return { 250.f, 120.f, false, 0.5f, 0.3f, 18.f };  // 탱커: 낮은 뎀
+	case Class::Mage:     return { 280.f, 600.f, false, 0.8f, 0.5f, 10.f };  // 지팡이 평타 매우 약함(화력은 스킬)
+	case Class::Archer:   return { 340.f, 700.f, true,  1.3f, 0.4f, 18.f };  // 조준
+	case Class::Assassin: return { 360.f, 120.f, false, 0.3f, 0.2f, 22.f };  // 백스탭 크리가 핵심
+	default:              return { 300.f, 120.f, false, 0.4f, 0.2f, 25.f };
 	}
 }
 

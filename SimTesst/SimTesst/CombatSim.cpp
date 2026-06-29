@@ -20,6 +20,7 @@ Unit& CombatSim::AddUnit(uint64_t id, uint64_t ownerId, Faction faction, Class c
 	u.ranged          = st.ranged;
 	u.attackPreDelay  = st.attackPreDelay;
 	u.attackPostDelay = st.attackPostDelay;
+	u.attackDamage    = st.attackDamage;
 	u.skills          = GetClassSkills(cls);
 
 	u.pos = pos;
@@ -187,7 +188,9 @@ void CombatSim::Tick(float dt)
 			Unit* target = GetUnit(u.current.targetId);
 			if (!target || !target->alive) { done = true; break; }   // 대상 소멸
 
-			float dist = (target->pos - u.pos).Length();
+			Vec3  toTarget = target->pos - u.pos;
+			float dist = toTarget.Length();
+			if (dist > 0.f) u.facing = toTarget.Normalized();   // 공격 중엔 대상을 바라봄(후면 판정 정상화)
 			if (dist > u.attackRange)                // 사거리 밖 → 진행 불가, 윈드업 리셋
 			{
 				u.execGauge = 0.f;
@@ -201,11 +204,16 @@ void CombatSim::Tick(float dt)
 				u.attackFired = true;
 				if (OnAttackFired) OnAttackFired(u.id);   // 휘두름/발사
 
-				if (!TryDefend(*target))
+				// 후면 판정: 공격자가 대상이 바라보는 반대편이면 후면
+				bool fromBehind = (u.pos - target->pos).Normalized().Dot(target->facing) < 0.f;
+				// 후면은 못 막음(방어 무시). 정면일 때만 방어 롤.
+				bool defended = (!fromBehind) && TryDefend(*target);
+
+				if (!defended)
 				{
-					bool fromBehind = (u.pos - target->pos).Normalized().Dot(target->facing) < 0.f;
-					target->hp -= ATTACK_DAMAGE;
-					if (OnDamaged) OnDamaged(target->id, fromBehind, false);   // crit은 후속
+					float dmg = u.attackDamage * (fromBehind ? CRIT_MULT : 1.f);   // 후면=크리 배율
+					target->hp -= dmg;
+					if (OnDamaged) OnDamaged(target->id, fromBehind, fromBehind);  // 후면이면 crit=true
 
 					if (target->hp <= 0.f)
 					{

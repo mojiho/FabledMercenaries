@@ -36,6 +36,7 @@ public:
 	// --- 공격 타이밍 (선/후딜) ---
 	float  attackPreDelay = 0.4f;         // 선딜(윈드업/조준)
 	float  attackPostDelay = 0.2f;        // 후딜(회복)
+	float  attackDamage = 25.f;           // 기본 공격 데미지 (클래스 주입)
 	bool   attackFired = false;           // 이번 사이클에 발사했는지(선딜 후 1회)
 
 	// --- 구성 ---
