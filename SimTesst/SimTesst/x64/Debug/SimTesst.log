@@ -1,3 +1,0 @@
-﻿  main.cpp
-C:\Users\CODE16\Desktop\김혜림_202604\MMO\SimTesst\SimTesst\main.cpp(27,84): warning C4244: '=': 'uint64_t'에서 'uint32_t'(으)로 변환하면서 데이터가 손실될 수 있습니다.
-  SimTesst.vcxproj -> C:\Users\CODE16\Desktop\김혜림_202604\MMO\SimTesst\x64\Debug\SimTesst.exe

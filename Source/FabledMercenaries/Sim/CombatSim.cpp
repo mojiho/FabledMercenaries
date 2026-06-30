@@ -1,5 +1,5 @@
 #include "CombatSim.h"
-#include <algorithm>	// std::main
+#include <algorithm>	// std::min
 #include <utility>		// std::move
 #include "Class.h"
 
@@ -13,21 +13,22 @@ Unit& CombatSim::AddUnit(uint64_t id, uint64_t ownerId, Faction faction, Class c
 	u.ownerId = ownerId;
 	u.faction = faction;
 	u.unitClass = cls;
-	u.moveSpeed = GetClassStats(cls).moveSpeed;   // 클래스 이속
-	u.attackRange = GetClassStats(cls).attackRange;	// 클래스 공격 사거리
-	u.skills    = GetClassSkills(cls);            // 클래스 스킬(방어 패시브) 주입
+
+	ClassStats st = GetClassStats(cls);          // ★ 주입은 emplace(이동) '전에' 해야 저장 유닛에 반영됨
+	u.moveSpeed       = st.moveSpeed;
+	u.attackRange     = st.attackRange;
+	u.ranged          = st.ranged;
+	u.attackPreDelay  = st.attackPreDelay;
+	u.attackPostDelay = st.attackPostDelay;
+	u.attackDamage    = st.attackDamage;
+	u.maxHp           = st.maxHp;
+	u.hp              = st.maxHp;   // 시작 체력 = 최대
+	u.skills          = GetClassSkills(cls);
+
 	u.pos = pos;
 	u.brain = std::move(brain);                 // 소유권 이전
-		u.ranged = GetClassStats(cls).ranged;
-	auto [it, ok] = _units.emplace(id, std::move(u));  // Unit은 이동전용 → move
-	ClassStats st = GetClassStats(cls);
-	u.moveSpeed = st.moveSpeed;
-	u.attackRange = st.attackRange;
-	u.ranged = st.ranged;
-	u.attackPreDelay = st.attackPreDelay;
-	u.attackPostDelay = st.attackPostDelay;
-	u.skills = GetClassSkills(cls);
 
+	auto [it, ok] = _units.emplace(id, std::move(u));  // Unit은 이동전용 → move
 	return it->second;
 }
 
@@ -61,6 +62,15 @@ float CombatSim::Rand01()
 // 피격 시 방어 패시브 롤. 쿨 찬 방어 스킬이 성공하면 쿨다운 시작 후 true.
 bool CombatSim::TryDefend(Unit& defender)
 {
+	// 방어 태세: 액티브 Defense 스킬의 차단 확률로 막음(쿨 무시, 정면 한정은 ResolveHit에서)
+	if (defender.defendStance)
+	{
+		for (auto& s : defender.skills)
+			if (s.category == SkillCategory::Active && s.type == SkillType::Defense)
+				return Rand01() < s.chance;
+		return false;
+	}
+
 	for (auto& s : defender.skills)
 	{
 		if (s.category != SkillCategory::Passive) continue;
@@ -141,6 +151,11 @@ void CombatSim::Tick(float dt)
 			if (s.cdRemaining > 0.f)
 				s.cdRemaining = std::max(0.f, s.cdRemaining - dt);
 
+	// 1.6) 스턴 감소
+	for (auto& [id, u] : _units)
+		if (u.stunRemaining > 0.f)
+			u.stunRemaining = std::max(0.f, u.stunRemaining - dt);
+
 	// 2) 의사결정 — brain 있는 유닛만(AI). 사람 조종은 brain==null → 건너뜀.
 	for (auto& [id, u] : _units)
 		if (u.brain)
@@ -150,6 +165,7 @@ void CombatSim::Tick(float dt)
 	for (auto& [id, u] : _units)
 	{
 		if (!u.alive) { u.executing = false; continue; }   // 사망 → 행동 정지
+		if (u.stunRemaining > 0.f) continue;               // 스턴 중 행동 불가
 		if (!u.executing) continue;
 		u.execGauge += EXEC_RATE * dt;
 
@@ -158,6 +174,7 @@ void CombatSim::Tick(float dt)
 		{
 		case CommandType::Move:
 		{
+			if (u.defendStance) break;   // 방어 태세 중엔 이동 불가
 			if (u.curWaypoint >= (int)u.current.waypoints.size()) { done = true; break; } // 가드(빈 경로/끝)
 			Vec3  target = u.current.waypoints[u.curWaypoint];
 			Vec3  to = target - u.pos;
@@ -174,7 +191,7 @@ void CombatSim::Tick(float dt)
 			{
 				Vec3 dir = to.Normalized();
 				u.pos    = u.pos + dir * step;
-				u.facing = dir;                          // 이동 방향 바라봄(백어택 판정용)
+				u.facing = dir;                      // 이동 방향 바라봄(백어택 판정용)
 			}
 			break;
 		}
@@ -182,28 +199,44 @@ void CombatSim::Tick(float dt)
 		{
 			Unit* target = GetUnit(u.current.targetId);
 			if (!target || !target->alive) { done = true; break; }   // 대상 소멸
+			
+			float slow = 1.f;
+			if (u.defendStance)
+				for (auto& s : u.skills)
+					if (s.category == SkillCategory::Active && s.type == SkillType::Defense) { slow = s.attackSlow; break; }
+			float preD = u.attackPreDelay * slow;
+			float postD = u.attackPostDelay * slow;
 
-			float dist = (target->pos - u.pos).Length();
-			if (dist > u.attackRange) break;        // 사거리 밖 → 발동 보류(접근은 brain이 시킴)
-			if (u.execGauge < EXEC_THRESH) break;   // 아직 충전 중
-			u.execGauge = 0.f;                       // 발동
-
-			if (!TryDefend(*target))
+			Vec3  toTarget = target->pos - u.pos;
+			float dist = toTarget.Length();
+			if (dist > 0.f) u.facing = toTarget.Normalized();   // 공격 중엔 대상을 바라봄(후면 판정 정상화)
+			if (dist > u.attackRange)                // 사거리 밖 → 진행 불가, 윈드업 리셋
 			{
-				target->hp -= ATTACK_DAMAGE;
-				if (target->hp <= 0.f)
-				{
-					target->hp = 0.f;
-					target->alive = false;
-					done = true;
-				}
-				else if (target->ranged && target->executing && target->current.type == CommandType::Attack)
-				{
-					target->execGauge = 0.f;   // 원거리 조준 중 피격 → 조준 풀림(다시 처음부터)
-				}
+				u.execGauge = 0.f;
+				u.attackFired = false;
+				break;
 			}
+
+			// 선딜 완료 순간 1회 발사
+			if (!u.attackFired && u.execGauge >= u.attackPreDelay)
+			{
+				u.attackFired = true;
+				if (OnAttackFired) OnAttackFired(u.id);   // 휘두름/발사
+
+				if (u.ranged)
+					SpawnProjectile(u, *target, u.attackDamage, true);                       // 원거리: 투사체 발사(도달 시 판정)
+				else if (ResolveHit(*target, u.pos, u.attackDamage))   // 근접: 즉시 판정
+					done = true;                                       // 처치 시 명령 완료
+			}
+
+			// 선딜+후딜 끝 → 사이클 반복(연속 공격)
+			if (u.execGauge >= u.attackPreDelay + u.attackPostDelay)
+			{
+				u.execGauge = 0.f;
+				u.attackFired = false;
+			}
+			break;
 		}
-		break;
 		case CommandType::Skill:
 		{
 			SkillType want = (SkillType)u.current.skillId;   // 명령이 지정한 스킬 종류
@@ -220,6 +253,7 @@ void CombatSim::Tick(float dt)
 				if (sk->cdRemaining > 0.f || u.mp < sk->mpCost) { done = true; break; }  // 쿨/마나 부족 → 취소
 				sk->cdRemaining = sk->cooldown;
 				u.mp -= sk->mpCost;
+				if (OnSkillCast) OnSkillCast(u.id, sk->type);   // 시전 이벤트
 
 				if (sk->type == SkillType::Charge)
 				{
@@ -233,7 +267,23 @@ void CombatSim::Tick(float dt)
 							u.pos = u.pos + dir * (d - u.attackRange);  // 근접 사거리 앞까지 순간이동
 							u.facing = dir;
 						}
+						target->stunRemaining = CHARGE_STUN;   // ★ 돌진 충돌 → 짧은 스턴(즉시 도망 방지)
 					}
+				}
+				else if (sk->type == SkillType::MagicBolt)
+				{
+					if (Unit* target = GetUnit(u.current.targetId))
+						SpawnProjectile(u, *target, sk->damage, false);   // 마법탄(직선), 데미지=스킬값
+				}
+				else if (sk->type == SkillType::Defense)
+				{
+					u.defendStance = !u.defendStance;   // 방어 태세 토글(플레이어 시전 경로)
+				}
+				else if (sk->type == SkillType::Heal)
+				{
+					if (Unit* ally = GetUnit(u.current.targetId))
+						if (ally->alive)
+							ally->hp = std::min(ally->maxHp, ally->hp + sk->damage);  // 회복(최대 HP 상한)
 				}
 			}
 
@@ -242,6 +292,16 @@ void CombatSim::Tick(float dt)
 				done = true;
 			break;
 		}
+		case CommandType::Defend:
+			u.defendStance = !u.defendStance;   // (호환) 방어 태세 토글
+			done = true;
+			break;
+
+		case CommandType::Focus:
+			u.mp += FOCUS_RATE * dt;                 // MP 충전 (제자리, 무방비)
+			if (u.mp >= u.mpMax) { u.mp = u.mpMax; done = true; }   // 가득 차면 완료
+			break;
+
 		default:
 			done = true;                             // None 등 → 완료 처리
 			break;
@@ -267,6 +327,8 @@ void CombatSim::Tick(float dt)
 			}
 		}
 	}
+
+	UpdateProjectiles(dt);
 }
 
 Unit* CombatSim::FindNearestHostile(const Unit& self)
@@ -282,4 +344,98 @@ Unit* CombatSim::FindNearestHostile(const Unit& self)
 		if (!best || d < bestDist) { best = &u; bestDist = d; }
 	}
 	return best;
+}
+
+bool CombatSim::ResolveHit(Unit& target, const Vec3& fromPos, float damage)
+{
+	if (!target.alive) return false;
+	bool fromBehind = (fromPos - target.pos).Normalized().Dot(target.facing) < 0.f;
+	bool defended = (!fromBehind) && TryDefend(target); // 후면은 못 막음(방어 무시). 정면일 때만 방어 롤.
+	if (defended) return false;
+
+	float dmg = damage * (fromBehind ? CRIT_MULT : 1.f);   // 후면=크리 배율
+	target.hp -= dmg;
+	if (OnDamaged) OnDamaged(target.id, fromBehind, fromBehind);
+
+	// 원거리 조준 중 피격 → 조준 풀림
+	if (target.ranged && target.executing && target.current.type == CommandType::Attack && !target.attackFired)
+	{
+		target.execGauge = 0.f;   // 원거리 조준 중 피격 → 조준 풀림
+	}
+
+	if (!target.executing)
+	{
+		Vec3 toAttacker = fromPos - target.pos; toAttacker.z = 0.f;
+		if (toAttacker.Length() > 0.f)
+			target.facing = toAttacker.Normalized();
+	}
+
+	if (target.hp <= 0.f)
+	{
+		target.hp = 0.f;
+		target.alive = false;
+		if (OnDeath) OnDeath(target.id);
+		return true;   // 사망
+	}
+
+	return false;
+}
+
+void CombatSim::SpawnProjectile(Unit& owner, Unit& target, float damage, bool arc)
+{
+	Projectile p;
+	p.id = ++_projGen;
+	p.ownerId = owner.id;
+	p.targetId = target.id;
+	p.damage = damage;
+	p.pos = owner.pos;
+	p.start = owner.pos;
+	p.startDist = (target.pos - owner.pos).Length();
+	p.arc = arc;
+	p.arcHeight = arc ? p.startDist * 0.25f : 0.f;
+	p.ownerFaction = owner.faction;
+	_projectiles.push_back(p);
+}
+
+void CombatSim::UpdateProjectiles(float dt)
+{
+	const float HIT_RADIUS = 30.f;
+	for (auto& p : _projectiles)
+	{
+		if (!p.alive) continue;
+
+		// 경로상 '소유자와 다른 진영' 유닛 중 가장 가까운 것에 충돌 (아군은 관통 → 몸빵 가능)
+		Unit* hit = nullptr;
+		float best = HIT_RADIUS;
+		for (auto& [id, u] : _units)
+		{
+			if (!u.alive) continue;
+			if (u.faction == p.ownerFaction) continue;   // 같은 편 관통
+			Vec3 d = u.pos - p.pos; d.z = 0.f;
+			float dd = d.Length();
+			if (dd <= best) { best = dd; hit = &u; }
+		}
+		if (hit)
+		{
+			ResolveHit(*hit, p.pos, p.damage);   // 가로챈 유닛(또는 목표)이 맞음 — 방어/크리는 ResolveHit에서
+			p.alive = false;
+			continue;
+		}
+
+		// 아직 안 맞았으면 목표 쪽으로 비행
+		Unit* target = GetUnit(p.targetId);
+		if (!target || !target->alive) { p.alive = false; continue; }
+		Vec3 to = target->pos - p.pos; to.z = 0.f;
+		p.pos = p.pos + to.Normalized() * (p.speed * dt);
+
+		// 포물선 높이(궤적용 z)
+		if (p.arc && p.startDist > 0.f)
+		{
+			float prog = (p.pos - p.start).Length() / p.startDist;
+			if (prog > 1.f) prog = 1.f;
+			p.pos.z = p.arcHeight * 4.f * prog * (1.f - prog);
+		}
+	}
+	_projectiles.erase(std::remove_if(_projectiles.begin(), _projectiles.end(),
+		[](const Projectile& p) { return !p.alive; }), _projectiles.end());
 }

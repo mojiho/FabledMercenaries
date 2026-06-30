@@ -26,4 +26,7 @@ struct Vec3
 		float inv = 1.f / len;
 		return { x * inv, y * inv, z * inv };
 	}
+
+	// 내적 (후면 판정 등)
+	float Dot(const Vec3& o) const { return x * o.x + y * o.y + z * o.z; }
 };
