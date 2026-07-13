@@ -95,6 +95,7 @@ protected:
 	void OnInputStarted();
 	void OnSetDestinationTriggered();
 	void OnSetDestinationReleased();
+	void OnClickCommand();   // 직접 좌클릭 → Sim 명령 (Enhanced Input 우회)
 	void OnTouchTriggered();
 	void OnTouchReleased();
 

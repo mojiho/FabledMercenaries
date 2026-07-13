@@ -24,6 +24,9 @@ Unit& CombatSim::AddUnit(uint64_t id, uint64_t ownerId, Faction faction, Class c
 	u.maxHp           = st.maxHp;
 	u.hp              = st.maxHp;   // 시작 체력 = 최대
 	u.skills          = GetClassSkills(cls);
+	u.cost            = st.cost;
+	if (auto cit = _commanders.find(ownerId); cit != _commanders.end())
+		cit->second.usedCost += u.cost;   // 지휘관 소속이면 코스트 합산 (★ emplace 전에!)
 
 	u.pos = pos;
 	u.brain = std::move(brain);                 // 소유권 이전
@@ -35,10 +38,9 @@ Unit& CombatSim::AddUnit(uint64_t id, uint64_t ownerId, Faction faction, Class c
 // <summary>
 // 등록: Commander. playerId는 외부에서 발급, Sim은 단순 등록만.
 // </summary>
-Commander& CombatSim::AddCommander(uint64_t playerId)
+Commander& CombatSim::AddCommander(uint64_t playerId, CommanderType type)
 {
-	Commander c;
-	c.id = playerId;
+	Commander c = MakeCommander(playerId, type);
 	auto [it, ok] = _commanders.emplace(playerId, c);
 	return it->second;
 }
@@ -98,6 +100,15 @@ CommandResult CombatSim::IssueCommand(uint64_t unitId, Command cmd, bool reserve
 	if (cit == _commanders.end() || cit->second.cmdGauge < ISSUE_COST)
 		return CommandResult::Rejected;
 	cit->second.cmdGauge -= ISSUE_COST;
+
+	// Cost 초과 -> 용병 불복종 (게이지는 이미 소모됨)
+	Commander& cm = cit->second;
+	float over = cm.usedCost - cm.costBudget;
+	if (over > 0.f)
+	{
+		float disobey = std::min(DISOBEY_MAX, (over / cm.costBudget) * DISOBEY_SLOPE);
+		if (Rand01() < disobey) return CommandResult::Disobeyed;   // 용병이 명령 무시
+	}
 
 	cmd.slotId = NewSlot();
 

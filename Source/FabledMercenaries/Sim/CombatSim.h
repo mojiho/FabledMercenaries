@@ -12,13 +12,13 @@
 #include "Commander.h"
 #include "Projectile.h"
 
-enum class CommandResult { Accepted, Rejected, Queued, Cancelled };
+enum class CommandResult { Accepted, Rejected, Queued, Cancelled, Disobeyed };
 
 class CombatSim
 {
 public:	// 등록 — brain 기본 null(=사람 조종). AI면 구체 Brain을 move로 넘김.
 	Unit& AddUnit(uint64_t id, uint64_t ownerId, Faction faction, Class cls, const Vec3& pos, std::unique_ptr<Brain> brain = nullptr); // 클래스(이속/스킬) 주입. Brain은 move로 소유권 이전.
-	Commander& AddCommander(uint64_t playerId); // Commander id는 외부에서 발급, Sim은 단순 등록만.
+	Commander& AddCommander(uint64_t playerId, CommanderType type = CommanderType::Command); // Commander id는 외부에서 발급, Sim은 단순 등록만.
 	Unit* GetUnit(uint64_t id);		// Unit id로 검색, 없으면 null
 
 	//명령
@@ -62,8 +62,12 @@ private:
 	static constexpr float CHARGE_STUN = 0.8f;
 	std::vector<Projectile> _projectiles;		// 발사체(화살/투사체) 목록
 	uint32_t _projGen = 0;	// 발사체 id 발급기
+	static constexpr float DISOBEY_SLOPE = 1.0f;   // 코스트 초과비율당 불복종 증가
+	static constexpr float DISOBEY_MAX   = 0.75f;  // 불복종 확률 상한
 
 	bool ResolveHit(Unit& target, const Vec3& fromPos, float damage);		// 피격 처리. 방어/크리 판정, HP 감소, 사망 처리. true=살아있음, false=사망
 	void SpawnProjectile(Unit& owner, Unit& tartget, float damage, bool arc);						// 발사체 생성. owner=발사자, target=목표. Projectile 목록에 추가
 	void UpdateProjectiles(float dt);								// 발사체 이동, 충돌 처리, 사망 처리
+
+
 };

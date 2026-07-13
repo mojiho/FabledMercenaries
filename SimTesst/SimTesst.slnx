@@ -1,7 +1,0 @@
-<Solution>
-  <Configurations>
-    <Platform Name="x64" />
-    <Platform Name="x86" />
-  </Configurations>
-  <Project Path="SimTesst/SimTesst.vcxproj" Id="ff092fc2-bb13-4b86-a7d0-4d163f0060bf" />
-</Solution>

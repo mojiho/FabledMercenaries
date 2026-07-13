@@ -13,6 +13,8 @@
 #include "EnhancedInputSubsystems.h"
 #include "Engine/LocalPlayer.h"
 #include "FabledMercenaries.h"
+#include "FMSimManager.h"
+#include "Kismet/GameplayStatics.h"
 
 AFabledMercenariesPlayerController::AFabledMercenariesPlayerController()
 {
@@ -33,6 +35,10 @@ void AFabledMercenariesPlayerController::SetupInputComponent()
 {
 	// set up gameplay key bindings
 	Super::SetupInputComponent();
+
+	// 직접 좌클릭 바인딩 (Enhanced Input IA와 무관하게 항상 발동)
+	InputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &AFabledMercenariesPlayerController::OnClickCommand);
+	UE_LOG(LogTemp, Warning, TEXT("[FM] SetupInputComponent: LMB bound"));
 
 	// Only set up input on local player controllers
 	if (IsLocalPlayerController())
@@ -90,26 +96,63 @@ void AFabledMercenariesPlayerController::OnSetDestinationTriggered()
 	// Update the move destination to wherever the cursor is pointing at
 	UpdateCachedDestination();
 	
-	// Move towards mouse pointer or touch
-	APawn* ControlledPawn = GetPawn();
-	if (ControlledPawn != nullptr)
-	{
-		FVector WorldDirection = (CachedDestination - ControlledPawn->GetActorLocation()).GetSafeNormal();
-		ControlledPawn->AddMovementInput(WorldDirection, 1.0, false);
-	}
+	// (템플릿: 캐릭터를 커서 쪽으로 이동 — RTS라 Sim이 대신 하므로 끔)
+	//APawn* ControlledPawn = GetPawn();
+	//if (ControlledPawn != nullptr)
+	//{
+	//	FVector WorldDirection = (CachedDestination - ControlledPawn->GetActorLocation()).GetSafeNormal();
+	//	ControlledPawn->AddMovementInput(WorldDirection, 1.0, false);
+	//}
 }
 
 void AFabledMercenariesPlayerController::OnSetDestinationReleased()
 {
-	// If it was a short press
+	UE_LOG(LogTemp, Warning, TEXT("[FM] OnSetDestinationReleased FIRED, dest=%s"), *CachedDestination.ToString());
+
+	// [흡수] 클릭 릴리즈 → Sim 유닛(전사 100) 이동명령 (press 길이 무관, 항상)
+	if (AFMSimManager* Mgr = Cast<AFMSimManager>(
+		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[FM] Manager FOUND -> IssueMove 100"));
+		Mgr->IssueMoveCommand(100, CachedDestination);
+		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Yellow,
+			FString::Printf(TEXT("MOVE unit100 -> %s"), *CachedDestination.ToString()));
+	}
+	else if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Red, TEXT("FMSimManager NOT FOUND"));
+	}
+
+	// 짧은 클릭이면 이펙트
 	if (FollowTime <= ShortPressThreshold)
 	{
-		// We move there and spawn some particles
-		UAIBlueprintHelperLibrary::SimpleMoveToLocation(this, CachedDestination);
 		UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, FXCursor, CachedDestination, FRotator::ZeroRotator, FVector(1.f, 1.f, 1.f), true, true, ENCPoolMethod::None, true);
 	}
 
 	FollowTime = 0.f;
+}
+
+void AFabledMercenariesPlayerController::OnClickCommand()
+{
+	FHitResult Hit;
+	bool bHit = GetHitResultUnderCursor(ECC_Visibility, false, Hit);
+	UE_LOG(LogTemp, Warning, TEXT("[FM] OnClickCommand FIRED, hit=%d loc=%s"), bHit, *Hit.Location.ToString());
+
+	if (!bHit) return;
+
+	if (AFMSimManager* Mgr = Cast<AFMSimManager>(
+		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[FM] Manager FOUND -> IssueMove 100"));
+		Mgr->HandleClick(Hit.Location);
+		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Yellow,
+			FString::Printf(TEXT("MOVE 100 -> %s"), *Hit.Location.ToString()));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[FM] Manager NOT FOUND"));
+		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Red, TEXT("Manager NOT FOUND"));
+	}
 }
 
 // Triggered every frame when the input is held down

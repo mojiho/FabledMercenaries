@@ -33,6 +33,7 @@ public:
 	bool   ranged = false;                // 원거리(조준 필요) 여부
 	float  mp = 0.f;
 	float  mpMax = 100.f;                 // 최대 MP (정신집중 상한, 스킬 시전 가능 여부)
+	float cost = 10.f;
 
 	// --- 공격 타이밍 (선/후딜) ---
 	float  attackPreDelay = 0.4f;         // 선딜(윈드업/조준)

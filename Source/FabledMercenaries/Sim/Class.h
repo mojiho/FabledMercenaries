@@ -23,19 +23,20 @@ struct ClassStats
 	float attackPostDelay;   // 후딜(회복) 초
 	float attackDamage;      // 기본 공격 데미지
 	float maxHp;          // 최대 체력
+	float cost;			// 고용코스트
 };
 
 inline ClassStats GetClassStats(Class c)
 {
 	switch (c)
 	{                       //  이속   사거리 원거리 선딜  후딜  뎀
-	case Class::Warrior:  return { 300.f, 120.f, false, 0.4f, 0.2f, 25.f, 130.f };
-	case Class::Tanker:   return { 250.f, 120.f, false, 0.5f, 0.3f, 18.f, 250.f };  // 단단
-	case Class::Mage:     return { 280.f, 600.f, false, 0.8f, 0.5f, 10.f,  70.f };  // 물몸
-	case Class::Archer:   return { 340.f, 700.f, true,  1.3f, 0.4f, 18.f,  90.f };
-	case Class::Assassin: return { 360.f, 120.f, false, 0.3f, 0.2f, 22.f,  90.f };
-	case Class::Healer:   return { 300.f, 500.f, false, 0.6f, 0.4f,  8.f,  80.f };  // 지원·약한평타·물몸
-	default:              return { 300.f, 120.f, false, 0.4f, 0.2f, 25.f, 100.f };
+	case Class::Warrior:  return { 300.f, 120.f, false, 0.4f, 0.2f, 25.f, 130.f, 20.f };
+	case Class::Tanker:   return { 250.f, 120.f, false, 0.5f, 0.3f, 18.f, 250.f, 25.f };
+	case Class::Mage:     return { 280.f, 600.f, false, 0.8f, 0.5f, 10.f,  70.f, 30.f };
+	case Class::Archer:   return { 340.f, 700.f, true,  1.3f, 0.4f, 18.f,  90.f, 28.f };
+	case Class::Assassin: return { 360.f, 120.f, false, 0.3f, 0.2f, 22.f,  90.f, 30.f };
+	case Class::Healer:   return { 300.f, 500.f, false, 0.6f, 0.4f,  8.f,  80.f, 30.f };
+	default:              return { 300.f, 120.f, false, 0.4f, 0.2f, 25.f, 100.f, 20.f };
 	}
 }
 
