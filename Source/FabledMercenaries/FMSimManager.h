@@ -14,6 +14,16 @@ public:
 
 	void HandleClick(const FVector& WorldPos);
 	uint64 FindUnitNear(const FVector& WorldPos, float Radius) const;
+
+	/** 선택된 유닛이 있나? (UMG에서 링 표시 여부 판단용) */
+	UFUNCTION(BlueprintPure, Category = "Sim")
+	bool HasSelectedUnit() const { return SelectedUnitId != 0; }
+
+	/** 선택된 유닛의 월드 위치. 있으면 true + OutPos 채움 */
+	UFUNCTION(BlueprintPure, Category = "Sim")
+	bool GetSelectedUnitWorldPos(FVector& OutPos) const;
+
+
 protected:
 	virtual void BeginPlay() override;
 private:

@@ -61,7 +61,8 @@ uint64 AFMSimManager::FindUnitNear(const FVector& WorldPos, float Radius) const
 	for (const auto& Pair : Sim.Units())
 	{
 		const Unit& U = Pair.second;
-		float D = FVector::Dist(WorldPos, FVector(U.pos.x, U.pos.y, U.pos.z));
+		// 탑다운 선택 → Z 무시하고 XY 평면 거리만 비교 (클릭은 바닥 Z, 유닛은 Sim z=0이라 3D로 하면 절대 안 잡힘)
+		float D = FVector::Dist2D(WorldPos, FVector(U.pos.x, U.pos.y, U.pos.z));
 		if (D < BestDist) { BestDist = D; Best = Pair.first; }   // Pair.first = 유닛 id
 	}
 	return Best;
@@ -79,4 +80,16 @@ void AFMSimManager::HandleClick(const FVector& WorldPos)
 	{
 		IssueMoveCommand(SelectedUnitId, WorldPos);	// 선택된 유닛이 있으면 클릭 지점으로 이동 명령
 	}
+}
+
+bool AFMSimManager::GetSelectedUnitWorldPos(FVector& OutPos) const
+{
+	if (SelectedUnitId == 0) return false;
+
+	auto It = Sim.Units().find(SelectedUnitId);   // 선택 id로 유닛 찾기
+	if (It == Sim.Units().end()) return false;    // (죽었거나 사라짐)
+
+	const Unit& U = It->second;
+	OutPos = FVector(U.pos.x, U.pos.y, U.pos.z + GroundZ);  // 바닥 위 좌표
+	return true;
 }

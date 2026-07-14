@@ -54,6 +54,14 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Input")
 	TObjectPtr<UInputAction> ZoomAction;
 
+	/** WASD 카메라 이동 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> CameraMoveAction;
+
+	/** QE 카메라 회전 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> CameraRotateAction;
+
 	/** 우클릭 누름 상태 (드래그 시작/종료) */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Input")
 	TObjectPtr<UInputAction> DragHoldAction;
@@ -101,6 +109,10 @@ protected:
 
 	/** 줌 처리 */
 	void OnZoom(const FInputActionValue& Value);
+
+	/** 키보드 카메라 무브*/
+	void OnCameraMove(const FInputActionValue& Value);
+	void OnCameraRotate(const FInputActionValue& Value);
 
 	/** 우클릭 드래그 시작/종료/이동 */
 	void OnDragStart();

@@ -14,6 +14,7 @@
 #include "Engine/LocalPlayer.h"
 #include "FabledMercenaries.h"
 #include "FMSimManager.h"
+#include "Core/FM_CameraPawn.h"
 #include "Kismet/GameplayStatics.h"
 
 AFabledMercenariesPlayerController::AFabledMercenariesPlayerController()
@@ -66,6 +67,11 @@ void AFabledMercenariesPlayerController::SetupInputComponent()
 
 			// 마우스 휠 줌
 			EnhancedInputComponent->BindAction(ZoomAction, ETriggerEvent::Triggered, this, &AFabledMercenariesPlayerController::OnZoom);
+			
+			// 키보드 마우스 컨트롤
+			EnhancedInputComponent->BindAction(CameraMoveAction, ETriggerEvent::Triggered, this, &AFabledMercenariesPlayerController::OnCameraMove);
+			EnhancedInputComponent->BindAction(CameraRotateAction, ETriggerEvent::Triggered, this, &AFabledMercenariesPlayerController::OnCameraRotate);
+
 
 			// 우클릭 드래그 패닝
 			EnhancedInputComponent->BindAction(DragHoldAction, ETriggerEvent::Started,   this, &AFabledMercenariesPlayerController::OnDragStart);
@@ -173,11 +179,25 @@ void AFabledMercenariesPlayerController::OnZoom(const FInputActionValue& Value)
 	// Value.Get<float>() : 휠 위 = +1.0, 휠 아래 = -1.0
 	float ZoomValue = Value.Get<float>();
 
-	// 현재 조종 중인 Pawn이 FabledMercenariesCharacter인지 확인 후 줌 호출
-	if (AFabledMercenariesCharacter* Char = Cast<AFabledMercenariesCharacter>(GetPawn()))
+	// 현재 조종 중인 Pawn이 카메라 폰이면 줌 호출
+	if (AFM_CameraPawn* Cam = Cast<AFM_CameraPawn>(GetPawn()))
 	{
-		Char->ZoomCamera(ZoomValue);
+		Cam->ZoomCamera(ZoomValue);
 	}
+}
+
+void AFabledMercenariesPlayerController::OnCameraMove(const FInputActionValue& Value)
+{
+	FVector2D Axis = Value.Get<FVector2D>();               // WASD → (X=좌우, Y=앞뒤)
+	if (AFM_CameraPawn* Cam = Cast<AFM_CameraPawn>(GetPawn()))
+		Cam->MoveCamera(Axis);
+}
+
+void AFabledMercenariesPlayerController::OnCameraRotate(const FInputActionValue& Value)
+{
+	float Axis = Value.Get<float>();                       // QE → (-1 / +1)
+	if (AFM_CameraPawn* Cam = Cast<AFM_CameraPawn>(GetPawn()))
+		Cam->RotateCamera(Axis);
 }
 
 void AFabledMercenariesPlayerController::OnDragStart()
@@ -198,11 +218,10 @@ void AFabledMercenariesPlayerController::OnDragMove(const FInputActionValue& Val
 	// Value.Get<FVector2D>() : 마우스 X/Y 이동량 (이번 프레임 델타)
 	FVector2D Delta = Value.Get<FVector2D>();
 
-	if (AFabledMercenariesCharacter* Char = Cast<AFabledMercenariesCharacter>(GetPawn()))
+	// 카메라 폰을 중심점 축으로 궤도 회전 (스케일은 폰의 OrbitSpeed가 담당)
+	if (AFM_CameraPawn* Cam = Cast<AFM_CameraPawn>(GetPawn()))
 	{
-		// 마우스 오른쪽으로(Delta.X+) → 카메라 Yaw 회전
-		// 마우스 위로(Delta.Y+) → 카메라 Pitch 회전
-		Char->PanCamera(FVector2D(Delta.X * DragPanSpeed, Delta.Y * DragPanSpeed));
+		Cam->OrbitCamera(Delta);
 	}
 }
 
