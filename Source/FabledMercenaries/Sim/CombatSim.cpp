@@ -186,7 +186,12 @@ void CombatSim::Tick(float dt)
 		case CommandType::Move:
 		{
 			if (u.defendStance) break;   // 방어 태세 중엔 이동 불가
-			if (u.curWaypoint >= (int)u.current.waypoints.size()) { done = true; break; } // 가드(빈 경로/끝)
+				if (u.curWaypoint >= (int)u.current.waypoints.size())
+				{
+					done = true;                     // 경로 끝
+					if (u.current.hasArriveFacing)   // 도착 방향 지정됐으면 그쪽 봄
+						u.facing = u.current.arriveFacing;
+				}
 			Vec3  target = u.current.waypoints[u.curWaypoint];
 			Vec3  to = target - u.pos;
 			float dist = to.Length();
@@ -196,7 +201,11 @@ void CombatSim::Tick(float dt)
 				u.pos = target;
 				u.curWaypoint++;
 				if (u.curWaypoint >= (int)u.current.waypoints.size())
+				{
 					done = true;                     // 경로 끝
+					if (u.current.hasArriveFacing)   // 도착 방향 지정됐으면 그쪽 봄
+						u.facing = u.current.arriveFacing;
+				}
 			}
 			else
 			{

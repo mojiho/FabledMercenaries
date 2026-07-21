@@ -72,10 +72,16 @@ protected:
 
 	/** 드래그 회전 감도 (마우스 1픽셀당 회전 도수) */
 	UPROPERTY(EditAnywhere, Category="Camera|Pan")
-	float DragPanSpeed = 0.3f;
+	float DragPanSpeed = 5.f;
 
 	/** 현재 우클릭 드래그 중인지 */
 	bool bIsDragging = false;
+
+	/** 우클릭 드래그 시작 위치 (스크린 좌표) */
+	FVector2D RightPressPos = FVector2D::ZeroVector;
+
+	UPROPERTY(EditAnywhere, Category = "Input")
+	float RightClickDragThreshold = 5.f; // 우클릭 드래그 시작 최소 이동량 (픽셀)
 
 	/** True if the controlled character should navigate to the mouse cursor. */
 	uint32 bMoveToMouseCursor : 1;
@@ -88,6 +94,10 @@ protected:
 
 	/** Time that the click input has been pressed */
 	float FollowTime = 0.0f;
+
+	/** 링의 이동 버튼이 호출 (UMG에서 부를 수 있게 BlueprintCallable) */
+	UFUNCTION(BlueprintCallable, Category = "Command")
+	void EnterMoveMode();
 
 public:
 
@@ -121,6 +131,25 @@ protected:
 
 	/** Helper function to get the move destination */
 	void UpdateCachedDestination();
+
+	void OnRightClickCommand();
+	void OnRightClickPressed();
+	void OnRightClickReleased();
+
+	virtual void PlayerTick(float DeltaTime) override;
+
+	/** 두 점 사이를 지형 높이를 따라 조각내어 그림 */
+	void DrawGroundLine(const FVector& A, const FVector& B, FColor Color);
+
+	void OnLeftReleased();                      // 좌클릭 뗌 (도착 방향 확정)
+
+	bool bMoveMode = false;
+
+	TArray<FVector> PendingWaypoints;
+
+	bool bAiming = false;                       // 도착지 방향 조준 중
+	FVector AimPoint = FVector::ZeroVector;     // 확정 대기 중인 도착지
+
 };
 
 

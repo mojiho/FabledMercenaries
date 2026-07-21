@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#include "DrawDebugHelpers.h" 
 #include "FabledMercenariesPlayerController.h"
 #include "GameFramework/Pawn.h"
 #include "Blueprint/AIBlueprintHelperLibrary.h"
@@ -15,6 +16,7 @@
 #include "FabledMercenaries.h"
 #include "FMSimManager.h"
 #include "Core/FM_CameraPawn.h"
+#include "Engine/Engine.h"
 #include "Kismet/GameplayStatics.h"
 
 AFabledMercenariesPlayerController::AFabledMercenariesPlayerController()
@@ -39,7 +41,14 @@ void AFabledMercenariesPlayerController::SetupInputComponent()
 
 	// 직접 좌클릭 바인딩 (Enhanced Input IA와 무관하게 항상 발동)
 	InputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &AFabledMercenariesPlayerController::OnClickCommand);
+	InputComponent->BindKey(EKeys::LeftMouseButton, IE_Released, this, &AFabledMercenariesPlayerController::OnLeftReleased);
 	UE_LOG(LogTemp, Warning, TEXT("[FM] SetupInputComponent: LMB bound"));
+
+	InputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &AFabledMercenariesPlayerController::OnRightClickPressed);
+	InputComponent->BindKey(EKeys::RightMouseButton, IE_Released, this, &AFabledMercenariesPlayerController::OnRightClickReleased);
+
+	InputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &AFabledMercenariesPlayerController::OnRightClickCommand);
+
 
 	// Only set up input on local player controllers
 	if (IsLocalPlayerController())
@@ -53,13 +62,13 @@ void AFabledMercenariesPlayerController::SetupInputComponent()
 		// Set up action bindings
 		if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(InputComponent))
 		{
-			// Setup mouse input events
+			// Set up mouse input events
 			EnhancedInputComponent->BindAction(SetDestinationClickAction, ETriggerEvent::Started, this, &AFabledMercenariesPlayerController::OnInputStarted);
 			EnhancedInputComponent->BindAction(SetDestinationClickAction, ETriggerEvent::Triggered, this, &AFabledMercenariesPlayerController::OnSetDestinationTriggered);
 			EnhancedInputComponent->BindAction(SetDestinationClickAction, ETriggerEvent::Completed, this, &AFabledMercenariesPlayerController::OnSetDestinationReleased);
 			EnhancedInputComponent->BindAction(SetDestinationClickAction, ETriggerEvent::Canceled, this, &AFabledMercenariesPlayerController::OnSetDestinationReleased);
 
-			// Setup touch input events
+			// Set up touch input events
 			EnhancedInputComponent->BindAction(SetDestinationTouchAction, ETriggerEvent::Started, this, &AFabledMercenariesPlayerController::OnInputStarted);
 			EnhancedInputComponent->BindAction(SetDestinationTouchAction, ETriggerEvent::Triggered, this, &AFabledMercenariesPlayerController::OnTouchTriggered);
 			EnhancedInputComponent->BindAction(SetDestinationTouchAction, ETriggerEvent::Completed, this, &AFabledMercenariesPlayerController::OnTouchReleased);
@@ -142,23 +151,69 @@ void AFabledMercenariesPlayerController::OnClickCommand()
 {
 	FHitResult Hit;
 	bool bHit = GetHitResultUnderCursor(ECC_Visibility, false, Hit);
-	UE_LOG(LogTemp, Warning, TEXT("[FM] OnClickCommand FIRED, hit=%d loc=%s"), bHit, *Hit.Location.ToString());
-
 	if (!bHit) return;
 
+	AFMSimManager* Mgr = Cast<AFMSimManager>(
+		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass()));
+	if (!Mgr) return;
+
+	// ── 이동 모드: 누름 = 도착지 지정 + 방향 조준 시작 (확정은 뗄 때) ──
+	if (bMoveMode)
+	{
+		AimPoint = Hit.Location;
+		bAiming = true;
+		return;
+	}
+
+	// ── 평소: 유닛 선택 ──
+	Mgr->HandleClick(Hit.Location);
+}
+
+void AFabledMercenariesPlayerController::OnLeftReleased()
+{
+	if (!bMoveMode || !bAiming) return;
+	bAiming = false;
+
+	FHitResult Hit;
+	if (!GetHitResultUnderCursor(ECC_Visibility, false, Hit)) return;
+	AFMSimManager* Mgr = Cast<AFMSimManager>(
+		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass()));
+	if (!Mgr) return;
+	
+	// 뗀 지점에 적이 있으면 → 이동 대신 공격
+	uint64 Enemy = Mgr->FindEnemyNear(Hit.Location, 60.f);
+	if (Enemy != 0)
+	{
+		Mgr->AttackTarget(Enemy);
+		PendingWaypoints.Empty();
+		bMoveMode = false;
+		UE_LOG(LogTemp, Warning, TEXT("[FM] 공격 명령 -> %llu"), Enemy);
+		return;
+	}
+	
+	// 드래그 방향 = 도착지 → 뗀 지점 (조금이라도 끌었을 때만)
+	FVector Dir = Hit.Location - AimPoint;  Dir.Z = 0.f;
+	const bool bHasFacing = Dir.SizeSquared() > (30.f * 30.f);
+	const FVector Facing = bHasFacing ? Dir.GetSafeNormal() : FVector::ZeroVector;
+
+	PendingWaypoints.Add(AimPoint);
+
+	// Ctrl이면 예약만 (마지막 아님 → 방향 무시하고 계속)
+	const bool bCtrl = IsInputKeyDown(EKeys::LeftControl) || IsInputKeyDown(EKeys::RightControl);
+	if (bCtrl)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[FM] 경유지 예약 %d개"), PendingWaypoints.Num());
+		return;
+	}
+
+	// 최종 실행: 마지막 도착지에 방향 적용
 	if (AFMSimManager* Mgr = Cast<AFMSimManager>(
 		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[FM] Manager FOUND -> IssueMove 100"));
-		Mgr->HandleClick(Hit.Location);
-		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Yellow,
-			FString::Printf(TEXT("MOVE 100 -> %s"), *Hit.Location.ToString()));
+		Mgr->MoveSelectedAlong(PendingWaypoints, Facing, bHasFacing);
 	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[FM] Manager NOT FOUND"));
-		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Red, TEXT("Manager NOT FOUND"));
-	}
+	PendingWaypoints.Empty();
+	bMoveMode = false;
 }
 
 // Triggered every frame when the input is held down
@@ -245,3 +300,123 @@ void AFabledMercenariesPlayerController::UpdateCachedDestination()
 		CachedDestination = Hit.Location;
 	}
 }
+
+void AFabledMercenariesPlayerController::OnRightClickPressed()
+{
+	float X, Y;
+	if (GetMousePosition(X, Y))
+	{
+		RightPressPos = FVector2D(X, Y);
+	}
+}
+
+void AFabledMercenariesPlayerController::OnRightClickReleased()
+{
+	float X, Y;
+	if (!GetMousePosition(X, Y)) return;
+
+	if (FVector2D::Distance(RightPressPos, FVector2D(X, Y)) > RightClickDragThreshold) return;
+
+	OnRightClickCommand();
+}
+
+void AFabledMercenariesPlayerController::OnRightClickCommand()
+{
+	bMoveMode = false;          // ← 이동 모드 취소
+	PendingWaypoints.Empty();   // ← 예약 점들 비우기
+	if (AFMSimManager* Mgr = Cast<AFMSimManager>(
+		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
+	{
+		Mgr->ClearSelection();
+	}
+}
+
+void AFabledMercenariesPlayerController::EnterMoveMode()
+{
+	bMoveMode = true;
+	PendingWaypoints.Empty();
+	
+	UE_LOG(LogTemp, Warning, TEXT("[FM] 이동 모드 ON"));
+	if (AFMSimManager* Mgr = Cast<AFMSimManager>(
+		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
+	{
+		Mgr->SetRingHidden(true);      // ← 버튼 누른 순간 링 사라짐 (선택은 유지)
+	}
+
+}
+
+void AFabledMercenariesPlayerController::PlayerTick(float DeltaTime)
+{
+	Super::PlayerTick(DeltaTime);
+	if (!bMoveMode) return;
+
+	FHitResult Hit;
+	if (!GetHitResultUnderCursor(ECC_Visibility, false, Hit)) return;
+	const FVector Cursor = Hit.Location + FVector(0, 0, 15);
+
+	AFMSimManager* Mgr = Cast<AFMSimManager>(
+		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass()));
+	if (!Mgr) return;
+
+	FVector Prev;
+	if (!Mgr->GetSelectedUnitWorldPos(Prev)) return;
+	Prev += FVector(0, 0, 15);
+
+	// 유닛 → 각 예약점 (전부 지형 따라감)
+	for (const FVector& WP : PendingWaypoints)
+	{
+		const FVector P = WP + FVector(0, 0, 15);
+		DrawGroundLine(Prev, P, FColor::Green);
+		DrawDebugSphere(GetWorld(), P, 18.f, 8, FColor::Green, false, -1.f, 0, 2.f);
+		Prev = P;
+	}
+
+	if (bAiming)
+	{
+		// 확정 대기 도착지 + 방향(도착지 → 커서) 화살표
+		const FVector Aim = AimPoint + FVector(0, 0, 15);
+		DrawGroundLine(Prev, Aim, FColor::Green);
+		DrawDebugSphere(GetWorld(), Aim, 40.f, 12, FColor(200, 200, 255), false, -1.f, 0, 1.5f);
+
+		FVector D = Cursor - Aim;  D.Z = 0.f;
+		if (D.SizeSquared() > 1.f)
+		{
+			const FVector Tip = Aim + D.GetSafeNormal() * 100.f;
+			DrawDebugDirectionalArrow(GetWorld(), Aim, Tip, 150.f, FColor::Yellow, false, -1.f, 0, 4.f);
+		}
+	}
+	else
+	{
+		// 아직 안 눌렀으면 커서까지 미리보기 + 고스트
+		DrawGroundLine(Prev, Cursor, FColor(200, 200, 255));
+		DrawDebugSphere(GetWorld(), Cursor, 40.f, 12, FColor(200, 200, 255), false, -1.f, 0, 1.5f);
+	}
+}
+
+void AFabledMercenariesPlayerController::DrawGroundLine(const FVector& A, const FVector& B, FColor Color)
+	{
+		const int32 Steps = 20;               // 조각 수 (많을수록 매끈)
+		FVector Prev;
+		bool bHavePrev = false;
+
+		for (int32 i = 0; i <= Steps; ++i)
+		{
+			const float T = (float)i / Steps;
+			const FVector P = FMath::Lerp(A, B, T);      // XY 경로상의 한 점
+
+			// 그 지점에서 아래로 쏴서 바닥 높이 찾기
+			FHitResult GHit;
+			const FVector From(P.X, P.Y, P.Z + 500.f);
+			const FVector To(P.X, P.Y, P.Z - 1000.f);
+			FVector Ground = P;
+			if (GetWorld()->LineTraceSingleByChannel(GHit, From, To, ECC_Visibility))
+				Ground = GHit.Location;
+			Ground.Z += 15.f;                            // 바닥에서 살짝 띄움
+
+			if (bHavePrev)
+				DrawDebugLine(GetWorld(), Prev, Ground, Color, false, -1.f, 0, 3.f);
+			Prev = Ground;
+			bHavePrev = true;
+		}
+	}
+
