@@ -47,7 +47,7 @@ void AFabledMercenariesPlayerController::SetupInputComponent()
 	InputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &AFabledMercenariesPlayerController::OnRightClickPressed);
 	InputComponent->BindKey(EKeys::RightMouseButton, IE_Released, this, &AFabledMercenariesPlayerController::OnRightClickReleased);
 
-	InputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &AFabledMercenariesPlayerController::OnRightClickCommand);
+	//InputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &AFabledMercenariesPlayerController::OnRightClickCommand);
 
 
 	// Only set up input on local player controllers
@@ -122,23 +122,8 @@ void AFabledMercenariesPlayerController::OnSetDestinationTriggered()
 
 void AFabledMercenariesPlayerController::OnSetDestinationReleased()
 {
-	UE_LOG(LogTemp, Warning, TEXT("[FM] OnSetDestinationReleased FIRED, dest=%s"), *CachedDestination.ToString());
-
-	// [흡수] 클릭 릴리즈 → Sim 유닛(전사 100) 이동명령 (press 길이 무관, 항상)
-	if (AFMSimManager* Mgr = Cast<AFMSimManager>(
-		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[FM] Manager FOUND -> IssueMove 100"));
-		Mgr->IssueMoveCommand(100, CachedDestination);
-		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Yellow,
-			FString::Printf(TEXT("MOVE unit100 -> %s"), *CachedDestination.ToString()));
-	}
-	else if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Red, TEXT("FMSimManager NOT FOUND"));
-	}
-
-	// 짧은 클릭이면 이펙트
+	// 좌클릭 실제 로직은 OnClickCommand/OnLeftReleased(BindKey)가 담당.
+	// 여기(템플릿 Enhanced Input)는 커서 클릭 이펙트만.
 	if (FollowTime <= ShortPressThreshold)
 	{
 		UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, FXCursor, CachedDestination, FRotator::ZeroRotator, FVector(1.f, 1.f, 1.f), true, true, ENCPoolMethod::None, true);
@@ -206,12 +191,8 @@ void AFabledMercenariesPlayerController::OnLeftReleased()
 		return;
 	}
 
-	// 최종 실행: 마지막 도착지에 방향 적용
-	if (AFMSimManager* Mgr = Cast<AFMSimManager>(
-		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
-	{
-		Mgr->MoveSelectedAlong(PendingWaypoints, Facing, bHasFacing);
-	}
+	// 최종 실행: 마지막 도착지에 방향 적용 (위에서 구한 Mgr 재사용)
+	Mgr->MoveSelectedAlong(PendingWaypoints, Facing, bHasFacing);
 	PendingWaypoints.Empty();
 	bMoveMode = false;
 }
@@ -347,50 +328,69 @@ void AFabledMercenariesPlayerController::EnterMoveMode()
 
 void AFabledMercenariesPlayerController::PlayerTick(float DeltaTime)
 {
-	Super::PlayerTick(DeltaTime);
-	if (!bMoveMode) return;
+    Super::PlayerTick(DeltaTime);
+    if (!bMoveMode) return;
 
-	FHitResult Hit;
-	if (!GetHitResultUnderCursor(ECC_Visibility, false, Hit)) return;
-	const FVector Cursor = Hit.Location + FVector(0, 0, 15);
+    FHitResult Hit;
+    if (!GetHitResultUnderCursor(ECC_Visibility, false, Hit)) return;
+    const FVector Cursor = Hit.Location + FVector(0, 0, 15);
 
-	AFMSimManager* Mgr = Cast<AFMSimManager>(
-		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass()));
-	if (!Mgr) return;
+    AFMSimManager* Mgr = Cast<AFMSimManager>(
+        UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass()));
+    if (!Mgr) return;
 
-	FVector Prev;
-	if (!Mgr->GetSelectedUnitWorldPos(Prev)) return;
-	Prev += FVector(0, 0, 15);
+    FVector Prev;
+    if (!Mgr->GetSelectedUnitWorldPos(Prev)) return;
+    Prev += FVector(0, 0, 15);
 
-	// 유닛 → 각 예약점 (전부 지형 따라감)
-	for (const FVector& WP : PendingWaypoints)
-	{
-		const FVector P = WP + FVector(0, 0, 15);
-		DrawGroundLine(Prev, P, FColor::Green);
-		DrawDebugSphere(GetWorld(), P, 18.f, 8, FColor::Green, false, -1.f, 0, 2.f);
-		Prev = P;
-	}
+    // 유닛 → 각 예약점 (기존 색: 초록)
+    for (const FVector& WP : PendingWaypoints)
+    {
+        const FVector P = WP + FVector(0, 0, 15);
+        DrawGroundLine(Prev, P, FColor::Green);
+        DrawDebugSphere(GetWorld(), P, 18.f, 8, FColor::Green, false, -1.f, 0, 2.f);
+        Prev = P;
+    }
 
-	if (bAiming)
-	{
-		// 확정 대기 도착지 + 방향(도착지 → 커서) 화살표
-		const FVector Aim = AimPoint + FVector(0, 0, 15);
-		DrawGroundLine(Prev, Aim, FColor::Green);
-		DrawDebugSphere(GetWorld(), Aim, 40.f, 12, FColor(200, 200, 255), false, -1.f, 0, 1.5f);
+    // 커서가 적 위인가? (적이면 선 끝을 적 위치에 고정)
+    FVector EnemyPos;
+    const uint64 Enemy = Mgr->FindEnemyNear(Hit.Location, 80.f);
+    const bool bEnemy = (Enemy != 0) && Mgr->GetUnitWorldPos(Enemy, EnemyPos);
+    if (bEnemy) EnemyPos += FVector(0, 0, 15);
 
-		FVector D = Cursor - Aim;  D.Z = 0.f;
-		if (D.SizeSquared() > 1.f)
-		{
-			const FVector Tip = Aim + D.GetSafeNormal() * 100.f;
-			DrawDebugDirectionalArrow(GetWorld(), Aim, Tip, 150.f, FColor::Yellow, false, -1.f, 0, 4.f);
-		}
-	}
-	else
-	{
-		// 아직 안 눌렀으면 커서까지 미리보기 + 고스트
-		DrawGroundLine(Prev, Cursor, FColor(200, 200, 255));
-		DrawDebugSphere(GetWorld(), Cursor, 40.f, 12, FColor(200, 200, 255), false, -1.f, 0, 1.5f);
-	}
+    if (bAiming)
+    {
+        const FVector Aim = AimPoint + FVector(0, 0, 15);
+        DrawGroundLine(Prev, Aim, FColor::Green);
+        DrawDebugSphere(GetWorld(), Aim, 40.f, 12, FColor(200, 200, 255), false, -1.f, 0, 1.5f);
+
+        if (bEnemy)   // 적 조준 = 빨강 공격선
+        {
+            DrawGroundLine(Aim, EnemyPos, FColor::Red);
+            DrawDebugSphere(GetWorld(), EnemyPos, 45.f, 12, FColor::Red, false, -1.f, 0, 2.f);
+        }
+        else          // 도착 방향 화살표
+        {
+            FVector D = Cursor - Aim;  D.Z = 0.f;
+            if (D.SizeSquared() > 1.f)
+            {
+                const FVector Tip = Aim + D.GetSafeNormal() * 100.f;
+                DrawDebugDirectionalArrow(GetWorld(), Aim, Tip, 150.f, FColor::Yellow, false, -1.f, 0, 4.f);
+            }
+        }
+    }
+    else if (bEnemy)
+    {
+        // 커서가 적 → 선이 적에 고정 + 빨강(공격 예고)
+        DrawGroundLine(Prev, EnemyPos, FColor::Red);
+        DrawDebugSphere(GetWorld(), EnemyPos, 45.f, 12, FColor::Red, false, -1.f, 0, 2.f);
+    }
+    else
+    {
+        // 빈 땅 미리보기 (연한 파랑) + 고스트
+        DrawGroundLine(Prev, Cursor, FColor(200, 200, 255));
+        DrawDebugSphere(GetWorld(), Cursor, 40.f, 12, FColor(200, 200, 255), false, -1.f, 0, 1.5f);
+    }
 }
 
 void AFabledMercenariesPlayerController::DrawGroundLine(const FVector& A, const FVector& B, FColor Color)

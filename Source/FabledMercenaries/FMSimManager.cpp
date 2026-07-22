@@ -3,7 +3,7 @@
 #include "Engine/World.h"          // ← GetWorld(), LineTraceSingleByChannel
 #include "Engine/EngineTypes.h"    // ← ECC_Visibility, FHitResult
 #include "CollisionQueryParams.h"  // ← 트레이스 파라미터
-
+#include "Sim/AIBrain.h"
 
 AFMSimManager::AFMSimManager()
 {
@@ -18,15 +18,17 @@ void AFMSimManager::BeginPlay()
 	Class team[] = { Class::Warrior, Class::Mage, Class::Archer };
 	for (int32 i = 0; i < 3; ++i)
 	{
-		Sim.AddUnit(100 + i, 1, Faction::Player, team[i], Vec3{ 0.f, (float)(i - 1) * 100.f, 0.f }, nullptr);
+		Sim.AddUnit(100 + i, 1, Faction::Player, team[i], Vec3{ 0.f, (float)(i - 1) * 100.f, 0.f },
+			std::make_unique<GuardBrain>());   // 명령 없을 때 근처 적에게 자동 반격
 	};
 	
+	Sim.AddCommander(2, CommanderType::Command);   // 적 진영 지휘관 (owner=2) — 없으면 명령이 전부 Rejected
 	// ── 적(Hostile) 스폰: 반대편에 3기, 브레인 없음(가만히 있는 표적) ──
 	Class enemyTeam[] = { Class::Warrior, Class::Tanker, Class::Archer };
 	for (int32 i = 0; i < 3; ++i)
 	{
 		Sim.AddUnit(200 + i, 2, Faction::Hostile, enemyTeam[i],
-			Vec3{ 600.f, (float)(i - 1) * 100.f, 0.f }, nullptr);
+			Vec3{ 600.f, (float)(i - 1) * 100.f, 0.f },std::make_unique<ChaseAttackBrain>());
 	}
 	
 	// 매니저가 실제로 도는지 + 유닛 몇 개 스폰됐는지
@@ -41,6 +43,7 @@ void AFMSimManager::Tick(float DeltaSeconds)
 	for (const auto& Pair : Sim.Units())
 	{
 		const Unit& U = Pair.second;
+		if (!U.alive) continue;   // 죽으면 화면에서 사라짐
 		FVector Loc(U.pos.x, U.pos.y, GroundZAt(U.pos.x, U.pos.y) + 50.f);   // 실제 지형 높이 위로
 
 		bool bSel = (Pair.first == SelectedUnitId);   // ◀ 선택됐나?
@@ -63,6 +66,16 @@ void AFMSimManager::Tick(float DeltaSeconds)
 		if (!F.IsNearlyZero())
 			DrawDebugDirectionalArrow(GetWorld(), Loc, Loc + F.GetSafeNormal() * 60.f,
 				60.f, FColor::Yellow, false, -1.f, 0, 3.f);
+		
+		// HP 바 (구체 위, 월드 Y축 방향)
+		const float BarW = 80.f;
+		const float Ratio = FMath::Clamp(U.hp / U.maxHp, 0.f, 1.f);
+		const FVector BarPos = Loc + FVector(0, 0, 70.f);          // 구체 위
+		const FVector Left  = BarPos - FVector(0, BarW * 0.5f, 0);
+		const FVector Right = BarPos + FVector(0, BarW * 0.5f, 0);
+		const FVector Fill  = Left + FVector(0, BarW * Ratio, 0);
+		DrawDebugLine(GetWorld(), Left, Right, FColor(40, 40, 40), false, -1.f, 0, 6.f);  // 배경(빈 체력)
+		DrawDebugLine(GetWorld(), Left, Fill,  FColor::Green,      false, -1.f, 0, 6.f);  // 현재 체력
 	}
 }
 
@@ -181,4 +194,13 @@ void AFMSimManager::AttackTarget(uint64 TargetId)
 	Sim.IssueCommand(SelectedUnitId, atk, false);
 	SelectedUnitId = 0;
 	bRingHidden = false;
+}
+
+bool AFMSimManager::GetUnitWorldPos(uint64 Id, FVector& OutPos) const
+{
+	auto It = Sim.Units().find(Id);
+	if (It == Sim.Units().end() || !It->second.alive) return false;
+	const Unit& U = It->second;
+	OutPos = FVector(U.pos.x, U.pos.y, GroundZAt(U.pos.x, U.pos.y));
+	return true;
 }

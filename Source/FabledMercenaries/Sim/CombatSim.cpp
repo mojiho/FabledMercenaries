@@ -230,8 +230,10 @@ void CombatSim::Tick(float dt)
 			Vec3  toTarget = target->pos - u.pos;
 			float dist = toTarget.Length();
 			if (dist > 0.f) u.facing = toTarget.Normalized();   // 공격 중엔 대상을 바라봄(후면 판정 정상화)
-			if (dist > u.attackRange)                // 사거리 밖 → 진행 불가, 윈드업 리셋
+			if (dist > u.attackRange)                // 사거리 밖 → 대상에게 접근
 			{
+				Vec3 dir = toTarget.Normalized();
+				u.pos = u.pos + dir * (u.moveSpeed * dt);
 				u.execGauge = 0.f;
 				u.attackFired = false;
 				break;
@@ -245,8 +247,8 @@ void CombatSim::Tick(float dt)
 
 				if (u.ranged)
 					SpawnProjectile(u, *target, u.attackDamage, true);                       // 원거리: 투사체 발사(도달 시 판정)
-				else if (ResolveHit(*target, u.pos, u.attackDamage))   // 근접: 즉시 판정
-					done = true;                                       // 처치 시 명령 완료
+				else
+					ResolveHit(*target, u.pos, u.attackDamage);   // 근접: 즉시 판정 (연속 공격; 대상 사망은 위 대상소멸 체크에서 done)
 			}
 
 			// 선딜+후딜 끝 → 사이클 반복(연속 공격)

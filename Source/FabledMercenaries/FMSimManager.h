@@ -19,6 +19,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Sim")
 	bool GetSelectedUnitWorldPos(FVector& OutPos) const;
 
+	/** 특정 id 유닛의 월드 위치 (살아있을 때만) */
+	bool GetUnitWorldPos(uint64 Id, FVector& OutPos) const;
+	
 	void ClearSelection();
 	
 	/** 여러 경유지로 이동 (예약 경로). 마지막 도착지에서 ArriveFacing 방향을 봄 */
@@ -31,7 +34,7 @@ public:
 	void AttackTarget(uint64 TargetId);
 	
 	void MoveSelectedTo(const FVector& WorldPos);
-
+	
 	UFUNCTION(BlueprintPure, Category = "Sim")
 	bool HasSelectedUnit() const { return SelectedUnitId != 0 && !bRingHidden; }
 

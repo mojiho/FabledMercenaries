@@ -1,13 +1,14 @@
 #include "AIBrain.h"
 #include "CombatSim.h"
 
+static constexpr float GUARD_AGGRO = 300.f;   // 이 반경 안의 적에게만 자동 반격
+
 void ChaseAttackBrain::Decide(CombatSim& sim, Unit& self, float dt)
 {
 	Unit* target = sim.FindNearestHostile(self);
 	if (!target) return;
 
 	float dist = (target->pos - self.pos).Length();
-
 	// 사거리 안 → 공격
 	if (dist <= self.attackRange)
 	{
@@ -236,4 +237,18 @@ void TankBrain::Decide(CombatSim& sim, Unit& self, float dt)
 			sim.IssueCommand(self.id, d, false);
 		}
 	}
+}
+
+void GuardBrain::Decide(CombatSim& sim, Unit& self, float dt)
+{
+	if (self.executing) return;                 // 플레이어 명령 수행 중 → 개입 안 함
+
+	Unit* target = sim.FindNearestHostile(self);
+	if (!target) return;
+
+	float dist = (target->pos - self.pos).Length();
+	if (dist > GUARD_AGGRO) return;             // 어그로 범위 밖이면 무시 (멀리 안 쫓아감)
+
+	Command atk; atk.type = CommandType::Attack; atk.targetId = target->id;
+	sim.IssueCommand(self.id, atk, false);      // 근처 적에게 반격
 }

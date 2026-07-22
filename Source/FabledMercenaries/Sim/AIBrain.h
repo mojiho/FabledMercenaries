@@ -30,3 +30,8 @@ class TankBrain : public Brain   // 탱커: 후방 아군 있으면 그 앞을 �
 public:
 	void Decide(CombatSim& sim, Unit& self, float dt) override;
 };
+
+class GuardBrain : public Brain
+{
+	void Decide(CombatSim& sim, Unit& self, float dt) override;
+};
