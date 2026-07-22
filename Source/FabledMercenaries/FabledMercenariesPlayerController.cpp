@@ -420,3 +420,24 @@ void AFabledMercenariesPlayerController::DrawGroundLine(const FVector& A, const 
 		}
 	}
 
+
+void AFabledMercenariesPlayerController::CmdDefend()
+{
+	if (AFMSimManager* Mgr = Cast<AFMSimManager>(
+	UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
+		Mgr->IssueDefendSelected();
+}
+
+void AFabledMercenariesPlayerController::CmdStop()
+{
+	if (AFMSimManager* Mgr = Cast<AFMSimManager>(
+		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
+		Mgr->IssueStopSelected();
+}
+
+void AFabledMercenariesPlayerController::CmdFocus()
+{
+	if (AFMSimManager* Mgr = Cast<AFMSimManager>(
+		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
+		Mgr->IssueFocusSelected();
+}

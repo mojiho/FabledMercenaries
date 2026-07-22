@@ -40,6 +40,19 @@ public:
 
 	void SetRingHidden(bool bInHidden) { bRingHidden = bInHidden; }
 
+	/** 선택 유닛 방어 태세 */
+	void IssueDefendSelected();
+	
+	/** 선택 유닛 유닛 정지 */
+	void IssueStopSelected();
+	
+	/** 선택 유닛 정신 집중 */
+	void IssueFocusSelected();
+
+	/** 스폰할 유닛 액터(BP_Unit) — 에디터에서 지정 */
+	UPROPERTY(EditAnywhere, Category = "Unit")
+	TSubclassOf<class AFMUnit> UnitClass;
+	
 protected:
 	virtual void BeginPlay() override;
 private:
@@ -52,4 +65,7 @@ private:
 	static constexpr float GroundZ = 210.f;
 
 	bool bRingHidden = false;	// 링 표시 숨김 여부 (UMG에서 설정)
+	
+	TMap<uint64, TObjectPtr<class AFMUnit>> UnitActors;   // Sim id → 화면 액터
+
 };

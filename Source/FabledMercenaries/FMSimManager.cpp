@@ -4,6 +4,7 @@
 #include "Engine/EngineTypes.h"    // ← ECC_Visibility, FHitResult
 #include "CollisionQueryParams.h"  // ← 트레이스 파라미터
 #include "Sim/AIBrain.h"
+#include "FMUnit.h"
 
 AFMSimManager::AFMSimManager()
 {
@@ -31,6 +32,23 @@ void AFMSimManager::BeginPlay()
 			Vec3{ 600.f, (float)(i - 1) * 100.f, 0.f },std::make_unique<ChaseAttackBrain>());
 	}
 	
+	// Sim 유닛마다 화면 액터 하나씩 스폰
+	if (UnitClass)
+	{
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;  // 겹쳐도 무조건 스폰
+		for (const auto& Pair : Sim.Units())
+		{
+			AFMUnit* A = GetWorld()->SpawnActor<AFMUnit>(UnitClass, FVector::ZeroVector, FRotator::ZeroRotator, Params);
+			if (A) UnitActors.Add(Pair.first, A);
+		}
+		UE_LOG(LogTemp, Warning, TEXT("[FM] 유닛 액터 스폰: %d개 (UnitClass OK)"), UnitActors.Num());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[FM] UnitClass가 None! FMSimManager 디테일에서 Unit Class를 BP_Unit으로 지정하세요."));
+	}
+	
 	// 매니저가 실제로 도는지 + 유닛 몇 개 스폰됐는지
 	UE_LOG(LogTemp, Warning, TEXT("[FM] SimManager BeginPlay, units=%d"), (int32)Sim.Units().size());
 }
@@ -48,19 +66,22 @@ void AFMSimManager::Tick(float DeltaSeconds)
 
 		bool bSel = (Pair.first == SelectedUnitId);   // ◀ 선택됐나?
 
-		FColor Col;
-		if (bSel)
-			Col = FColor::White;                        // 선택 = 흰색
-		else if (U.faction == Faction::Hostile)
-			Col = FColor(255, 60, 60);                  // 적 = 진한 빨강
-		else                                            // 아군 = 클래스별
-			Col = (U.unitClass == Class::Warrior) ? FColor::Orange
-				: (U.unitClass == Class::Mage)    ? FColor::Cyan
-				:                                    FColor::Green;
-		float R = bSel ? 60.f : 40.f;                  // 선택 = 크게
+		// 발밑 진영 링: 아군=하늘색, 적=빨강, 선택=흰색·굵게
+		const FColor TeamCol = (U.faction == Faction::Hostile) ? FColor(255, 60, 60) : FColor(60, 160, 255);
+		const FColor RingCol = bSel ? FColor::White : TeamCol;
+		const float  Thick   = bSel ? 6.f : 3.f;
+		const FVector Feet    = Loc - FVector(0, 0, 45.f);   // 바닥 근처 (Loc은 +50이라 -45 = +5)
+		DrawDebugCircle(GetWorld(), Feet, 55.f, 32, RingCol, false, -1.f, 0, Thick,
+			FVector(1, 0, 0), FVector(0, 1, 0), false);   // XY 평면(바닥에 눕힘)
 
-		DrawDebugSphere(GetWorld(), Loc, R, 12, Col, false, -1.f, 0, 2.f);
-
+		// 화면 액터를 Sim 위치·방향으로 갱신
+		if (TObjectPtr<AFMUnit>* Found = UnitActors.Find(Pair.first))
+		{
+			FVector FloorLoc(U.pos.x, U.pos.y, GroundZAt(U.pos.x, U.pos.y));   // 발이 바닥에
+			FVector FacingDir(U.facing.x, U.facing.y, 0.f);
+			(*Found)->UpdateFromSim(FloorLoc, FacingDir);
+		}
+		
 		// 바라보는 방향 화살표 (도착 방향 확인용)
 		FVector F(U.facing.x, U.facing.y, 0.f);
 		if (!F.IsNearlyZero())
@@ -76,6 +97,12 @@ void AFMSimManager::Tick(float DeltaSeconds)
 		const FVector Fill  = Left + FVector(0, BarW * Ratio, 0);
 		DrawDebugLine(GetWorld(), Left, Right, FColor(40, 40, 40), false, -1.f, 0, 6.f);  // 배경(빈 체력)
 		DrawDebugLine(GetWorld(), Left, Fill,  FColor::Green,      false, -1.f, 0, 6.f);  // 현재 체력
+		
+		const float MpRatio = (U.mpMax > 0.f) ? FMath::Clamp(U.mp / U.mpMax, 0.f, 1.f) : 0.f;
+		const FVector MpBase = Loc + FVector(0, 0, 60.f);   // HP바(70)보다 살짝 아래
+		DrawDebugLine(GetWorld(), MpBase - FVector(0, BarW*0.5f, 0), MpBase + FVector(0, BarW*0.5f, 0), FColor(30,30,60), false, -1.f, 0, 5.f);
+		DrawDebugLine(GetWorld(), MpBase - FVector(0, BarW*0.5f, 0), MpBase - FVector(0, BarW*0.5f, 0) + FVector(0, BarW*MpRatio, 0), FColor::Blue, false, -1.f, 0, 5.f);
+	
 	}
 }
 
@@ -203,4 +230,35 @@ bool AFMSimManager::GetUnitWorldPos(uint64 Id, FVector& OutPos) const
 	const Unit& U = It->second;
 	OutPos = FVector(U.pos.x, U.pos.y, GroundZAt(U.pos.x, U.pos.y));
 	return true;
+}
+
+void AFMSimManager::IssueDefendSelected()
+{
+	if (SelectedUnitId == 0) return;
+	Command c;
+	c.type = CommandType::Defend;
+	Sim.IssueCommand(SelectedUnitId, c, false);
+	SelectedUnitId = 0;   // 명령 후 선택 해제 → 링 사라짐
+	bRingHidden = false;
+}
+
+void AFMSimManager::IssueStopSelected()
+{
+	if (SelectedUnitId == 0) return;
+	Command c;
+	c.type = CommandType::Stop;
+	Sim.IssueCommand(SelectedUnitId, c, false);
+	SelectedUnitId = 0;   // 명령 후 선택 해제 → 링 사라짐
+	bRingHidden = false;
+}
+
+
+void AFMSimManager::IssueFocusSelected()
+{
+	if (SelectedUnitId == 0) return;
+	Command c;
+	c.type = CommandType::Focus;
+	Sim.IssueCommand(SelectedUnitId, c, false);
+	SelectedUnitId = 0;   // 명령 후 선택 해제 → 링 사라짐
+	bRingHidden = false;
 }

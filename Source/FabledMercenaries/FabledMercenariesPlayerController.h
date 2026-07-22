@@ -99,6 +99,15 @@ protected:
 	UFUNCTION(BlueprintCallable, Category = "Command")
 	void EnterMoveMode();
 
+	UFUNCTION(BlueprintCallable, Category = "Command")
+	void CmdDefend();
+
+	UFUNCTION(BlueprintCallable, Category = "Command")
+	void CmdStop();
+	
+	UFUNCTION(BlueprintCallable, Category = "Command")
+	void CmdFocus();
+	
 public:
 
 	/** Constructor */
