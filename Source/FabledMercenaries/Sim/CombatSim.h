@@ -53,6 +53,8 @@ private:
 	std::unordered_map<uint64_t, Commander> _commanders;  // per-player 게이지
 	uint32_t _slotGen = 0;
 
+	bool _aiIssuing = false;   // 브레인 의사결정 중 = AI 명령 → 게이지/불복종 면제(반격은 자원 무소모)
+
 	// 튜닝 상수(1차값 — P0에서 조정)
 	static constexpr float ISSUE_COST    = 1.0f;   // 명령 1회 발행 비용
 	static constexpr float EXEC_RATE     = 1.0f;   // execGauge 진행/초 (선/후딜 타이머 속도)

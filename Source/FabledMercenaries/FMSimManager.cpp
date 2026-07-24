@@ -6,6 +6,23 @@
 #include "Sim/AIBrain.h"
 #include "FMUnit.h"
 
+static EUnitAnim ToAnim(ActionState s)
+{
+	switch (s)
+	{
+	case ActionState::Moving:        return EUnitAnim::Move;
+	case ActionState::AttackWindup:
+	case ActionState::AttackRecover: return EUnitAnim::Attack;
+	case ActionState::Casting:       return EUnitAnim::Cast;
+	case ActionState::Defending:     return EUnitAnim::Defend;
+	case ActionState::Focusing:      return EUnitAnim::Focus;
+	case ActionState::Stunned:       return EUnitAnim::Stun;
+	case ActionState::Dead:          return EUnitAnim::Dead;
+	default:                         return EUnitAnim::Idle;
+	}
+}
+
+
 AFMSimManager::AFMSimManager()
 {
 	PrimaryActorTick.bCanEverTick = true;		// 매 프레임마다 Tick() 호출
@@ -77,9 +94,9 @@ void AFMSimManager::Tick(float DeltaSeconds)
 		// 화면 액터를 Sim 위치·방향으로 갱신
 		if (TObjectPtr<AFMUnit>* Found = UnitActors.Find(Pair.first))
 		{
-			FVector FloorLoc(U.pos.x, U.pos.y, GroundZAt(U.pos.x, U.pos.y));   // 발이 바닥에
+			FVector FloorLoc(U.pos.x, U.pos.y, GroundZAt(U.pos.x, U.pos.y));
 			FVector FacingDir(U.facing.x, U.facing.y, 0.f);
-			(*Found)->UpdateFromSim(FloorLoc, FacingDir);
+			(*Found)->UpdateFromSim(FloorLoc, FacingDir, ToAnim(U.GetActionState()));
 		}
 		
 		// 바라보는 방향 화살표 (도착 방향 확인용)

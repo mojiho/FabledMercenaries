@@ -95,19 +95,23 @@ CommandResult CombatSim::IssueCommand(uint64_t unitId, Command cmd, bool reserve
 	Unit* u = GetUnit(unitId);
 	if (!u) return CommandResult::Rejected;
 
-	// 이 유닛을 지휘하는 플레이어의 게이지 검사
-	auto cit = _commanders.find(u->ownerId);
-	if (cit == _commanders.end() || cit->second.cmdGauge < ISSUE_COST)
-		return CommandResult::Rejected;
-	cit->second.cmdGauge -= ISSUE_COST;
-
-	// Cost 초과 -> 용병 불복종 (게이지는 이미 소모됨)
-	Commander& cm = cit->second;
-	float over = cm.usedCost - cm.costBudget;
-	if (over > 0.f)
+	// 플레이어 명령만 지휘관 게이지·불복종 적용. AI(브레인) 반격은 자원 무소모 → 항상 발동.
+	// (덕분에 반격이 플레이어 게이지를 갉아먹지 못해, 플레이어 명령이 언제나 우선)
+	if (!_aiIssuing)
 	{
-		float disobey = std::min(DISOBEY_MAX, (over / cm.costBudget) * DISOBEY_SLOPE);
-		if (Rand01() < disobey) return CommandResult::Disobeyed;   // 용병이 명령 무시
+		auto cit = _commanders.find(u->ownerId);
+		if (cit == _commanders.end() || cit->second.cmdGauge < ISSUE_COST)
+			return CommandResult::Rejected;
+		cit->second.cmdGauge -= ISSUE_COST;
+
+		// Cost 초과 -> 용병 불복종 (게이지는 이미 소모됨)
+		Commander& cm = cit->second;
+		float over = cm.usedCost - cm.costBudget;
+		if (over > 0.f)
+		{
+			float disobey = std::min(DISOBEY_MAX, (over / cm.costBudget) * DISOBEY_SLOPE);
+			if (Rand01() < disobey) return CommandResult::Disobeyed;   // 용병이 명령 무시
+		}
 	}
 
 	cmd.slotId = NewSlot();
@@ -168,9 +172,11 @@ void CombatSim::Tick(float dt)
 			u.stunRemaining = std::max(0.f, u.stunRemaining - dt);
 
 	// 2) 의사결정 — brain 있는 유닛만(AI). 사람 조종은 brain==null → 건너뜀.
+	_aiIssuing = true;                     // 이 구간의 IssueCommand는 AI 명령 → 게이지 무소모
 	for (auto& [id, u] : _units)
 		if (u.brain)
 			u.brain->Decide(*this, u, dt);
+	_aiIssuing = false;
 
 	// 3) 명령 수행
 	for (auto& [id, u] : _units)

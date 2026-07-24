@@ -329,6 +329,23 @@ void AFabledMercenariesPlayerController::EnterMoveMode()
 void AFabledMercenariesPlayerController::PlayerTick(float DeltaTime)
 {
     Super::PlayerTick(DeltaTime);
+
+    // 링이 떠있는 동안(유닛 선택 중)엔 카메라를 그 유닛에 고정(따라감)
+    if (AFMSimManager* SelMgr = Cast<AFMSimManager>(
+        UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
+    {
+        FVector SelPos;
+        if (SelMgr->HasSelectedUnit() && SelMgr->GetSelectedUnitWorldPos(SelPos))
+        {
+            if (AFM_CameraPawn* Cam = Cast<AFM_CameraPawn>(GetPawn()))
+            {
+                const FVector Cur = Cam->GetActorLocation();
+                const FVector Tgt(SelPos.X, SelPos.Y, Cur.Z);   // XY만 따라감(높이·각도는 유지)
+                Cam->SetActorLocation(FMath::VInterpTo(Cur, Tgt, DeltaTime, 10.f));
+            }
+        }
+    }
+
     if (!bMoveMode) return;
 
     FHitResult Hit;

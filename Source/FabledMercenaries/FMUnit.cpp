@@ -8,9 +8,11 @@ AFMUnit::AFMUnit()
 	SetRootComponent(Mesh);
 }
 
-void AFMUnit::UpdateFromSim(const FVector& Loc, const FVector& FacingDir)
+void AFMUnit::UpdateFromSim(const FVector& Loc, const FVector& FacingDir, EUnitAnim NewAnim)
 {
 	SetActorLocation(Loc);
 	if (!FacingDir.IsNearlyZero())
 		SetActorRotation(FacingDir.Rotation());   // XY 방향 → Yaw
+	
+	Anim = NewAnim;			// AnumBP가 이 값을 읽어 상태 전환
 }
