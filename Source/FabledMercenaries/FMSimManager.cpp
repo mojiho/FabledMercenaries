@@ -78,9 +78,18 @@ void AFMSimManager::Tick(float DeltaSeconds)
 	for (const auto& Pair : Sim.Units())
 	{
 		const Unit& U = Pair.second;
-		if (!U.alive) continue;   // 죽으면 화면에서 사라짐
-		FVector Loc(U.pos.x, U.pos.y, GroundZAt(U.pos.x, U.pos.y) + 50.f);   // 실제 지형 높이 위로
 
+		// 화면 액터 갱신 — 죽어도 실행(Dead 애님 전달 → 쓰러지는 모션, 시체 남음)
+		if (TObjectPtr<AFMUnit>* Found = UnitActors.Find(Pair.first))
+		{
+			FVector FloorLoc(U.pos.x, U.pos.y, GroundZAt(U.pos.x, U.pos.y));
+			FVector FacingDir(U.facing.x, U.facing.y, 0.f);
+			(*Found)->UpdateFromSim(FloorLoc, FacingDir, ToAnim(U.GetActionState()), DeltaSeconds);
+		}
+
+		if (!U.alive) continue;   // 죽은 유닛은 아래 UI(링/HP/MP/화살표) 생략
+
+		FVector Loc(U.pos.x, U.pos.y, GroundZAt(U.pos.x, U.pos.y) + 50.f);   // 실제 지형 높이 위로
 		bool bSel = (Pair.first == SelectedUnitId);   // ◀ 선택됐나?
 
 		// 발밑 진영 링: 아군=하늘색, 적=빨강, 선택=흰색·굵게
@@ -90,14 +99,6 @@ void AFMSimManager::Tick(float DeltaSeconds)
 		const FVector Feet    = Loc - FVector(0, 0, 45.f);   // 바닥 근처 (Loc은 +50이라 -45 = +5)
 		DrawDebugCircle(GetWorld(), Feet, 55.f, 32, RingCol, false, -1.f, 0, Thick,
 			FVector(1, 0, 0), FVector(0, 1, 0), false);   // XY 평면(바닥에 눕힘)
-
-		// 화면 액터를 Sim 위치·방향으로 갱신
-		if (TObjectPtr<AFMUnit>* Found = UnitActors.Find(Pair.first))
-		{
-			FVector FloorLoc(U.pos.x, U.pos.y, GroundZAt(U.pos.x, U.pos.y));
-			FVector FacingDir(U.facing.x, U.facing.y, 0.f);
-			(*Found)->UpdateFromSim(FloorLoc, FacingDir, ToAnim(U.GetActionState()));
-		}
 		
 		// 바라보는 방향 화살표 (도착 방향 확인용)
 		FVector F(U.facing.x, U.facing.y, 0.f);
@@ -119,7 +120,16 @@ void AFMSimManager::Tick(float DeltaSeconds)
 		const FVector MpBase = Loc + FVector(0, 0, 60.f);   // HP바(70)보다 살짝 아래
 		DrawDebugLine(GetWorld(), MpBase - FVector(0, BarW*0.5f, 0), MpBase + FVector(0, BarW*0.5f, 0), FColor(30,30,60), false, -1.f, 0, 5.f);
 		DrawDebugLine(GetWorld(), MpBase - FVector(0, BarW*0.5f, 0), MpBase - FVector(0, BarW*0.5f, 0) + FVector(0, BarW*MpRatio, 0), FColor::Blue, false, -1.f, 0, 5.f);
-	
+
+	}
+
+	// 투사체 그리기 (화살=베이지, 마법=보라). pos.z는 포물선 높이(arc)
+	for (const Projectile& P : Sim.Projectiles())
+	{
+		if (!P.alive) continue;
+		const FVector PLoc(P.pos.x, P.pos.y, GroundZAt(P.pos.x, P.pos.y) + 80.f + P.pos.z);  // 몸통 높이 + 포물선
+		const FColor  PCol = P.arc ? FColor(210, 190, 130) : FColor(180, 90, 255);
+		DrawDebugSphere(GetWorld(), PLoc, 12.f, 8, PCol, false, -1.f, 0, 1.5f);
 	}
 }
 
@@ -268,7 +278,7 @@ void AFMSimManager::IssueStopSelected()
 	SelectedUnitId = 0;   // 명령 후 선택 해제 → 링 사라짐
 	bRingHidden = false;
 }
-
+                  
 
 void AFMSimManager::IssueFocusSelected()
 {
@@ -278,4 +288,34 @@ void AFMSimManager::IssueFocusSelected()
 	Sim.IssueCommand(SelectedUnitId, c, false);
 	SelectedUnitId = 0;   // 명령 후 선택 해제 → 링 사라짐
 	bRingHidden = false;
+}
+
+TArray<FSkillInfo> AFMSimManager::GetSelectedUnitSkills() const
+{
+	TArray<FSkillInfo> Out;
+	if (SelectedUnitId == 0) return Out;
+
+	auto It = Sim.Units().find(SelectedUnitId);
+	if (It == Sim.Units().end()) return Out;
+
+	for (const Skill& s : It->second.skills)
+	{
+		if (s.category != SkillCategory::Active) continue;   // 시전 가능한 액티브만
+
+		FSkillInfo Info;
+		Info.SkillType   = (int32)s.type;
+		Info.MpCost      = s.mpCost;
+		Info.Cooldown    = s.cooldown;
+		Info.CdRemaining = s.cdRemaining;
+		switch (s.type)
+		{
+		case SkillType::Charge:    Info.Name = TEXT("돌진");     break;
+		case SkillType::MagicBolt: Info.Name = TEXT("마법탄");   break;
+		case SkillType::Heal:      Info.Name = TEXT("힐");       break;
+		case SkillType::Defense:   Info.Name = TEXT("방어 태세"); break;
+		default:                   Info.Name = TEXT("스킬");     break;
+		}
+		Out.Add(Info);
+	}
+	return Out;
 }

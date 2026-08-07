@@ -3,10 +3,24 @@
 #include "Sim/CombatSim.h"
 #include "FMSimManager.generated.h"
 
+USTRUCT(BlueprintType)
+struct FSkillInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly) FString Name;
+	UPROPERTY(BlueprintReadOnly) int32   SkillType = 0;   // Sim SkillType 값 (시전 시 skillId)
+	UPROPERTY(BlueprintReadOnly) int32   MpCost = 0;
+	UPROPERTY(BlueprintReadOnly) float   Cooldown = 0.f;
+	UPROPERTY(BlueprintReadOnly) float   CdRemaining = 0.f;
+};
+
 UCLASS()
+
 class FABLEDMERCENARIES_API AFMSimManager : public AActor
 {
 	GENERATED_BODY()
+
 public:
 	AFMSimManager();
 	virtual void Tick(float DeltaSeconds) override;
@@ -52,6 +66,10 @@ public:
 	/** 스폰할 유닛 액터(BP_Unit) — 에디터에서 지정 */
 	UPROPERTY(EditAnywhere, Category = "Unit")
 	TSubclassOf<class AFMUnit> UnitClass;
+	
+	/** 선택 유닛의 액티브(시전 가능) 스킬 목록 */
+	UFUNCTION(BlueprintCallable, Category = "Command")
+	TArray<FSkillInfo> GetSelectedUnitSkills() const;
 	
 protected:
 	virtual void BeginPlay() override;
