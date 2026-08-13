@@ -16,7 +16,8 @@ enum class CommandType : uint16_t
     Skill,
     Defend,
     Focus,
-    Stop
+    Stop,
+    Item
 };
 
 struct Command
@@ -26,6 +27,7 @@ struct Command
     std::vector<Vec3> waypoints;    // Move: 이동 경로(여러 지점)
     uint64_t targetId = 0; // 공격/스킬 대상의 ID (Unit.id와 동일 타입)
     uint32_t skillId = 0;  // 스킬 ID
+    uint32_t itemId = 0;   // 아이템 ID (Item 명령, ItemType 값)
     uint32_t issueSeq = 0; // 발급 순서 번호 (순서 구분용)
     Vec3 arriveFacing = {1.f, 0.f , 0.f};
     bool hasArriveFacing = false;

@@ -4,6 +4,7 @@
 #include "Engine/EngineTypes.h"    // ← ECC_Visibility, FHitResult
 #include "CollisionQueryParams.h"  // ← 트레이스 파라미터
 #include "Sim/AIBrain.h"
+#include "Sim/Item.h"
 #include "FMUnit.h"
 
 static EUnitAnim ToAnim(ActionState s)
@@ -33,6 +34,10 @@ void AFMSimManager::BeginPlay()
 	Super::BeginPlay();
 	Sim.AddCommander(1, CommanderType::Command);
 
+	// 메타 인벤토리 초기 지급 (P0 테스트용 — 나중에 로스터/상점으로 대체)
+	Meta.id = 1;
+	Meta.Add((uint32)ItemType::HealPotion, 5);
+
 	Class team[] = { Class::Warrior, Class::Mage, Class::Archer };
 	for (int32 i = 0; i < 3; ++i)
 	{
@@ -41,7 +46,7 @@ void AFMSimManager::BeginPlay()
 	};
 	
 	Sim.AddCommander(2, CommanderType::Command);   // 적 진영 지휘관 (owner=2) — 없으면 명령이 전부 Rejected
-	// ── 적(Hostile) 스폰: 반대편에 3기, 브레인 없음(가만히 있는 표적) ──
+	// ── 적(Hostile) 스폰: 반대편에 3기
 	Class enemyTeam[] = { Class::Warrior, Class::Tanker, Class::Archer };
 	for (int32 i = 0; i < 3; ++i)
 	{
@@ -248,6 +253,77 @@ void AFMSimManager::AttackTarget(uint64 TargetId)
 	Sim.IssueCommand(SelectedUnitId, atk, false);
 	SelectedUnitId = 0;
 	bRingHidden = false;
+}
+
+void AFMSimManager::CastSkill(int32 SkillType, uint64 TargetId)
+{
+	if (SelectedUnitId == 0) return;
+
+	Command c;
+	c.type = CommandType::Skill;
+	c.skillId = (uint32)SkillType;   // Sim SkillType 값
+	c.targetId = TargetId;           // 대상(공격=적, 힐=아군, 자기강화=자신)
+
+	Sim.IssueCommand(SelectedUnitId, c, false);
+	SelectedUnitId = 0;
+	bRingHidden = false;
+}
+
+bool AFMSimManager::ActivateItem(int32 ItemId)
+{
+	const ItemDef Def = GetItemDef((uint32)ItemId);
+	switch (Def.category)
+	{
+	case ItemCategory::Consumable: return UseConsumable(ItemId);   // 지금 코드 그대로 옮김
+	case ItemCategory::Equipment:  return EquipItem(ItemId);       // 지금은 로그만 찍고 false
+	}
+	return false;
+}
+
+bool AFMSimManager::UseConsumable(int32 ItemId)
+{
+	if (SelectedUnitId == 0) return false;
+
+	const Unit* U = Sim.GetUnit(SelectedUnitId);
+	if (!U || !U->alive) return false;
+
+	if (!Meta.Consume((uint32)ItemId))   // 재고 없음
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[FM] 아이템 부족 (id=%d)"), ItemId);
+		return false;
+	}
+
+	Command c;
+	c.type   = CommandType::Item;
+	c.itemId = (uint32)ItemId;
+	c.targetId = 0;                      // 0 = 자신에게 사용
+
+	Sim.IssueCommand(SelectedUnitId, c, false);
+	SelectedUnitId = 0;
+	bRingHidden = false;
+	return true;
+}
+
+bool AFMSimManager::EquipItem(int32 ItemId)
+{
+	return false;
+}
+
+
+TArray<FFMItemInfo> AFMSimManager::GetInventory() const
+{
+	TArray<FFMItemInfo> Out;
+	for (const ItemStack& S : Meta.inventory)
+	{
+		if (S.count <= 0) continue;
+
+		FFMItemInfo Info;
+		Info.ItemId = (int32)S.itemId;
+		Info.Count  = S.count;
+		Info.Name   = ((ItemType)S.itemId == ItemType::HealPotion) ? TEXT("회복 포션") : TEXT("아이템");
+		Out.Add(Info);
+	}
+	return Out;
 }
 
 bool AFMSimManager::GetUnitWorldPos(uint64 Id, FVector& OutPos) const

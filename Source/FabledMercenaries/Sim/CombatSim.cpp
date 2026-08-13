@@ -2,6 +2,7 @@
 #include <algorithm>	// std::min
 #include <utility>		// std::move
 #include "Class.h"
+#include "Item.h"
 
 // <summary>
 // 등록: Unit. id는 외부에서 발급, Sim은 단순 등록만. Brain은 move로 소유권 이전.
@@ -320,6 +321,31 @@ void CombatSim::Tick(float dt)
 				done = true;
 			break;
 		}
+		case CommandType::Item:
+		{
+			const ItemDef def = GetItemDef(u.current.itemId);
+			if (def.type == ItemType::None) { done = true; break; }   // 모르는 아이템
+
+			// 선딜 완료 순간 1회 발동 (스킬과 동일한 사이클)
+			if (!u.attackFired && u.execGauge >= def.preDelay)
+			{
+				u.attackFired = true;
+
+				if (def.type == ItemType::HealPotion)
+				{
+					// targetId 0 = 자신에게 사용
+					Unit* t = u.current.targetId ? GetUnit(u.current.targetId) : &u;
+					if (t && t->alive)
+						t->hp = std::min(t->maxHp, t->hp + def.amount);
+				}
+			}
+
+			// 후딜까지 끝 → 완료
+			if (u.execGauge >= def.preDelay + def.postDelay)
+				done = true;
+			break;
+		}
+
 		case CommandType::Defend:
 			u.defendStance = !u.defendStance;   // (호환) 방어 태세 토글
 			done = true;

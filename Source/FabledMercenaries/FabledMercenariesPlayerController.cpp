@@ -15,6 +15,7 @@
 #include "Engine/LocalPlayer.h"
 #include "FabledMercenaries.h"
 #include "FMSimManager.h"
+#include "Sim/Item.h"
 #include "Core/FM_CameraPawn.h"
 #include "Engine/Engine.h"
 #include "Kismet/GameplayStatics.h"
@@ -142,6 +143,16 @@ void AFabledMercenariesPlayerController::OnClickCommand()
 		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass()));
 	if (!Mgr) return;
 
+	// ── 스킬 모드: 클릭한 유닛을 대상으로 스킬 시전 ──
+	if (bSkillMode)
+	{
+		uint64 Target = Mgr->FindUnitNear(Hit.Location, 60.f);   // 아군/적 아무 유닛
+		if (Target != 0)
+			Mgr->CastSkill(PendingSkillType, Target);
+		bSkillMode = false;
+		return;
+	}
+
 	// ── 이동 모드: 누름 = 도착지 지정 + 방향 조준 시작 (확정은 뗄 때) ──
 	if (bMoveMode)
 	{
@@ -152,6 +163,19 @@ void AFabledMercenariesPlayerController::OnClickCommand()
 
 	// ── 평소: 유닛 선택 ──
 	Mgr->HandleClick(Hit.Location);
+}
+
+void AFabledMercenariesPlayerController::ChooseSkill(int32 SkillType)
+{
+	bSkillMode = true;
+	PendingSkillType = SkillType;
+
+	// 링 숨김 (선택은 유지 → 어느 유닛이 시전할지 앎)
+	if (AFMSimManager* Mgr = Cast<AFMSimManager>(
+		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
+	{
+		Mgr->SetRingHidden(true);
+	}
 }
 
 void AFabledMercenariesPlayerController::OnLeftReleased()
@@ -457,4 +481,12 @@ void AFabledMercenariesPlayerController::CmdFocus()
 	if (AFMSimManager* Mgr = Cast<AFMSimManager>(
 		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
 		Mgr->IssueFocusSelected();
+}
+
+void AFabledMercenariesPlayerController::CmdUseHealPotion()
+{
+	// 대상 선택 없이 자신에게 즉시 사용 (P0: 아이템 1종)
+	if (AFMSimManager* Mgr = Cast<AFMSimManager>(
+		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
+		Mgr->ActivateItem((int32)ItemType::HealPotion);
 }

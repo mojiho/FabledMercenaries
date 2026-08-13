@@ -140,6 +140,16 @@ struct Commander {
 ```
 
 > 메타 `Player`(재화·아이템·로스터)는 **Sim 폴더 밖**(예: `Meta/Player.h`)에 둔다 — 전투 Sim 순수성 유지. P0 전투엔 당장 불필요, 골격만.
+>
+> **구현됨 (2026-08-11)** — 원형 커맨드 링의 "모든 버튼이 동작한다"를 보기 위해 아이템 최소 골격을 넣음. 분리 원칙:
+> | | 위치 | 내용 |
+> |---|---|---|
+> | 인벤토리·수량 | `Meta/Player.h` (Sim 밖) | `ItemStack`/`MetaPlayer` — `CountOf`/`Add`/`Consume` |
+> | 사용 효과 | `Sim/Item.h` + `CombatSim` | `ItemType`/`ItemDef`/`GetItemDef(itemId)` — 회복량·선딜·후딜 |
+>
+> Sim은 인벤토리를 **모르고** `Command.itemId`만 받아 효과 테이블로 처리한다 → 결정적(서버/클라 동일 Sim 재현 가능). 수량 차감은 `AFMSimManager::UseItemOnSelected`가 Sim 명령 발행 **전에** 메타에서 수행.
+> `CommandType::Item` 추가, `Command.itemId` 추가, `Unit::GetActionState()`는 `Item → Casting`(시전 모션 재사용).
+> P0 아이템은 **회복 포션 1종(id=1, 60 회복, 선딜 0.3 / 후딜 0.4), 자신에게만 사용**. 대상 선택 없음 = 클릭 모드 불필요.
 > ⚠️ 옛 `Character.h`/`Enemy.h`/`Enemy.cpp`는 **삭제**(Unit으로 흡수). 아래 CombatSim 코드블록의 `AddCharacter/AddEnemy`/`Think` 참조도 다음 단계에서 `AddUnit`/`brain->Decide`로 갱신 예정.
 
 ```cpp

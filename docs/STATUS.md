@@ -1,6 +1,6 @@
 # Fabled Mercenaries — 진행 현황 & 다음 할 일 (STATUS)
 
-> 단일 "지금 어디까지 했고 다음에 뭐 할지" 참조. 최종 갱신: **2026-07-21**.
+> 단일 "지금 어디까지 했고 다음에 뭐 할지" 참조. 최종 갱신: **2026-08-11**.
 > 관련 문서: 전투/클래스 설계 `combat_class_design.md`, P0 프로토타입 설계 `prototype_phase_p0_design.md`, 서버 설계 `server_technical_design_v2.md`, **아트 파이프라인 `art_pipeline.md`**.
 >
 > 제약 메모: 1인 **프로그래머** — 코드/개발 시간 충분, **병목은 아트(특히 3D 모델링)**. 전략은 `art_pipeline.md` 참조(베이스 에셋+Mixamo+툰 셰이더+모듈러로 우회).
@@ -30,6 +30,21 @@ P0 싱글 프로토타입의 **엔진 비의존 전투 Sim 코어** 검증 완�
 - **지형 추적**: `GroundZAt(x,y)`(아래로 라인트레이스)로 구체·네비선을 실제 지형 높이에 얹음(경사면 대응).
 - **카메라**: 휠=줌, 우클릭 드래그=궤도회전, WASD=중심점 이동(카메라 기준), Q/E=회전. (Enhanced Input: `IA_CameraMove` Axis2D + swizzle/negate, `IA_CameraRotate` Axis1D; **BP_TopDownController 디폴트에 IA 지정 필수**, Q에 Negate 있어야 Q/E 반대방향.)
 
+**원형 커맨드 링 — 버튼 배치 (2026-08-11):**
+
+| 버튼 | 기능 | 호출 | 상태 |
+|---|---|---|---|
+| Button_0 | 이동 | `EnterMoveMode()` | ✅ |
+| Button_1 | 방어 | `CmdDefend()` | ✅ |
+| Button_2 | 정신집중 | `CmdFocus()` | ✅ |
+| Button_3 | 정지 | `CmdStop()` | ✅ |
+| Button_4 | **스킬** | `WBP_SkillList` 토글 → 행 클릭 시 `ChooseSkill(SkillType)` | C++·UI 완료, **링 버튼 배선 남음** |
+| Button_5 | **아이템(회복 포션)** | `CmdUseHealPotion()` | C++ 완료, **링 버튼 배선 남음** |
+
+- **스킬 UI**: `WBP_SkillRow.SetData(InName, InCost, InSkillType)` + 버튼 클릭 → `ChooseSkill`. `WBP_SkillList.Refresh()` = SkillBox 비우기 → `GetSelectedUnitSkills()` → ForEach → 행 생성/채우기/담기. `Event Construct → Refresh` 연결됨.
+- **아이템**: 대상 선택 없이 **선택 유닛 자신에게 즉시 사용**. `AFMSimManager::UseItemOnSelected(ItemId)`가 메타 재고 차감 → `CommandType::Item` 발행. `BeginPlay`에서 포션 5개 지급(테스트용). 목록 UI(`WBP_ItemList`)는 미구현 — 종류가 1개라 버튼 직결.
+- 설계 근거·분리 원칙은 `prototype_phase_p0_design.md`의 메타 `Player` 절 참조.
+
 **전투 (진행 중):**
 - 적 3기(`Faction::Hostile`, id 200~, 브레인 없음=표적) 스폰·빨강 렌더 ✅.
 - `FMSimManager`에 `FindEnemyNear`/`AttackTarget`(=`CommandType::Attack`+`targetId`) 헤더 추가됨 → **컨트롤러 `OnLeftReleased`에서 적 클릭 판정→공격 라우팅 연결 중.** 다음: HP바/사망 시각화, 적에 `ChaseAttackBrain` 붙여 반격.
@@ -41,6 +56,7 @@ P0 싱글 프로토타입의 **엔진 비의존 전투 Sim 코어** 검증 완�
 - **편집기: Rider** 사용(VS 2026 업데이트가 WebView2에서 깨짐). Rider는 UE5.8용 **.NET 10 런타임 필요**(없으면 프로젝트 모델 생성 실패). UBT 프로젝트 재생성: `Build.bat -projectfiles -project=…`.
 - **종료 시 D3D11 크래시**(Intel UHD 770 iGPU, SM6 미지원 폴백) — 작업엔 무해, `Close Without Sending`. 근본 해결은 외장 GPU.
 - **동기화**: 이번에 Sim `Command.h`/`CombatSim.cpp`에 도착방향 로직 추가 → **서버/SimTesst 사본과 어긋남**(동기화 시 반영 필요). 게임시스템(코스트/지휘관/불복종)은 **Server/GameServer/Sim이 정본**.
+  - **2026-08-11 추가 분기**: `Command.h`에 `CommandType::Item` + `Command.itemId`, `Unit.h`의 `GetActionState()`에 `Item` 케이스, `CombatSim.cpp`에 `CommandType::Item` 처리, **신규 `Sim/Item.h`**. 동기화 시 이 4건도 같이 옮길 것. (`Meta/Player.h`는 Sim 밖이라 서버 사본과 무관)
 
 ---
 

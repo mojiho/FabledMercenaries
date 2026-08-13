@@ -65,6 +65,7 @@ public:
 		case CommandType::Move:   return ActionState::Moving;
 		case CommandType::Attack: return attackFired ? ActionState::AttackRecover : ActionState::AttackWindup;
 		case CommandType::Skill:  return ActionState::Casting;
+		case CommandType::Item:   return ActionState::Casting;   // 아이템 사용도 시전 모션 재사용
 		case CommandType::Defend: return ActionState::Defending;
 		case CommandType::Focus:  return ActionState::Focusing;
 		default:                  return ActionState::Idle;

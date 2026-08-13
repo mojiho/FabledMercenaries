@@ -1,6 +1,7 @@
 #pragma once
 #include "GameFramework/Actor.h"
 #include "Sim/CombatSim.h"
+#include "Meta/Player.h"
 #include "FMSimManager.generated.h"
 
 USTRUCT(BlueprintType)
@@ -15,8 +16,19 @@ struct FSkillInfo
 	UPROPERTY(BlueprintReadOnly) float   CdRemaining = 0.f;
 };
 
-UCLASS()
+// 주의: 엔진 Slate(STreeView.h)에 이미 FItemInfo가 있어 이름 충돌 → FM 접두사 필수
+USTRUCT(BlueprintType)
+struct FFMItemInfo
+{
+	GENERATED_BODY()
 
+	UPROPERTY(BlueprintReadOnly) FString Name;
+	UPROPERTY(BlueprintReadOnly) int32   ItemId = 0;   // Sim ItemType 값
+	UPROPERTY(BlueprintReadOnly) int32   Category = 0;   // 0=소비 1=장착 (아이콘/정렬용)
+	UPROPERTY(BlueprintReadOnly) int32   Count = 0;
+};
+
+UCLASS()
 class FABLEDMERCENARIES_API AFMSimManager : public AActor
 {
 	GENERATED_BODY()
@@ -46,6 +58,23 @@ public:
 
 	/** 선택 유닛 → 대상에게 공격 명령 */
 	void AttackTarget(uint64 TargetId);
+
+	/** 선택 유닛 → 스킬 시전 (SkillType=Sim SkillType 값, 대상 유닛 id) */
+	void CastSkill(int32 SkillType, uint64 TargetId);
+
+	/** 선택 유닛이 아이템 사용(자신에게). 인벤 수량 차감 후 Sim에 Item 명령 발행. 성공 시 true */
+	UFUNCTION(BlueprintCallable, Category = "Command")
+	bool ActivateItem(int32 ItemId);
+
+	UFUNCTION(BlueprintCallable, Category = "Command")
+	bool UseConsumable(int32 ItemId);
+	
+	UFUNCTION(BlueprintCallable, Category = "Command")
+	bool EquipItem(int32 ItemId);
+	
+	/** 메타 인벤토리 목록 (UI용) */
+	UFUNCTION(BlueprintCallable, Category = "Command")
+	TArray<FFMItemInfo> GetInventory() const;
 	
 	void MoveSelectedTo(const FVector& WorldPos);
 	
@@ -77,6 +106,7 @@ private:
 	/** (X,Y) 지점의 실제 지형 높이를 트레이스로 구함 */
 	float GroundZAt(float X, float Y) const;
 	CombatSim Sim;
+	MetaPlayer Meta;					// 인벤토리 등 전투 밖 데이터 (Sim 순수성 유지)
 	uint64 SelectedUnitId = 0;			// 0 = 선택된 유닛 없음
 
 	// UE 바닥 높이(클릭 트레이스 Z≈210). Sim 지면(z=0)을 이 높이에 얹어서 그림

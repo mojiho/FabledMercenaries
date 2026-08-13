@@ -107,6 +107,14 @@ protected:
 	
 	UFUNCTION(BlueprintCallable, Category = "Command")
 	void CmdFocus();
+
+	/** 스킬 선택 → 대상 클릭 모드 진입 (WBP_SkillRow가 호출) */
+	UFUNCTION(BlueprintCallable, Category = "Command")
+	void ChooseSkill(int32 SkillType);
+
+	/** 회복 포션 사용 (링의 아이템 버튼이 호출). 선택 유닛 자신에게 즉시 사용 */
+	UFUNCTION(BlueprintCallable, Category = "Command")
+	void CmdUseHealPotion();
 	
 public:
 
@@ -158,6 +166,9 @@ protected:
 
 	bool bAiming = false;                       // 도착지 방향 조준 중
 	FVector AimPoint = FVector::ZeroVector;     // 확정 대기 중인 도착지
+
+	bool bSkillMode = false;                    // 스킬 대상 클릭 대기 중
+	int32 PendingSkillType = 0;                 // 시전 대기 중인 스킬(Sim SkillType 값)
 
 };
 
