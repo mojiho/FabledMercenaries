@@ -31,4 +31,6 @@ struct Command
     uint32_t issueSeq = 0; // 발급 순서 번호 (순서 구분용)
     Vec3 arriveFacing = {1.f, 0.f , 0.f};
     bool hasArriveFacing = false;
+    Vec3 targetPos;
+    bool hasTargetPos = false;
 };

@@ -51,7 +51,7 @@ void AFMSimManager::BeginPlay()
 	for (int32 i = 0; i < 3; ++i)
 	{
 		Sim.AddUnit(200 + i, 2, Faction::Hostile, enemyTeam[i],
-			Vec3{ 600.f, (float)(i - 1) * 100.f, 0.f },std::make_unique<ChaseAttackBrain>());
+			Vec3{ 600.f, (float)(i - 1) * 100.f, 0.f },std::make_unique<GuardBrain>());
 	}
 	
 	// Sim 유닛마다 화면 액터 하나씩 스폰
@@ -165,8 +165,13 @@ uint64 AFMSimManager::FindUnitNear(const FVector& WorldPos, float Radius) const
 
 void AFMSimManager::HandleClick(const FVector& WorldPos)
 {
+	const uint64 Prev = SelectedUnitId;
 	SelectedUnitId = FindUnitNear(WorldPos, 50.f);   // 근처 유닛 선택, 없으면 0(해제)
-	bRingHidden = false;
+	bTargeting = false;
+	
+	// 리스트가 떠 있는데 다른 유닛을 골랐으면 → 리스트 닫고 링 복귀
+	if (bMenuOpen && SelectedUnitId != Prev)
+		OnMenuCancel.Broadcast();
 }
 
 bool AFMSimManager::GetSelectedUnitWorldPos(FVector& OutPos) const
@@ -185,7 +190,7 @@ bool AFMSimManager::GetSelectedUnitWorldPos(FVector& OutPos) const
 void AFMSimManager::ClearSelection()
 {
 	SelectedUnitId = 0;
-	bRingHidden = false;
+	bTargeting = false;
 }
 
 void AFMSimManager::MoveSelectedTo(const FVector& WorldPos)
@@ -194,7 +199,7 @@ void AFMSimManager::MoveSelectedTo(const FVector& WorldPos)
 	{
 		IssueMoveCommand(SelectedUnitId, WorldPos);
 		SelectedUnitId = 0;
-		bRingHidden = false;
+		bTargeting = false;
 	}
 }
 
@@ -225,7 +230,7 @@ void AFMSimManager::MoveSelectedAlong(const TArray<FVector>& Waypoints, const FV
 
 	Sim.IssueCommand(SelectedUnitId, mv, false);
 	SelectedUnitId = 0;
-	bRingHidden = false;
+	bTargeting = false;
 }
 
 uint64 AFMSimManager::FindEnemyNear(const FVector& WorldPos, float Radius) const
@@ -252,7 +257,7 @@ void AFMSimManager::AttackTarget(uint64 TargetId)
 
 	Sim.IssueCommand(SelectedUnitId, atk, false);
 	SelectedUnitId = 0;
-	bRingHidden = false;
+	bTargeting = false;
 }
 
 void AFMSimManager::CastSkill(int32 SkillType, uint64 TargetId)
@@ -266,7 +271,7 @@ void AFMSimManager::CastSkill(int32 SkillType, uint64 TargetId)
 
 	Sim.IssueCommand(SelectedUnitId, c, false);
 	SelectedUnitId = 0;
-	bRingHidden = false;
+	bTargeting = false;
 }
 
 bool AFMSimManager::ActivateItem(int32 ItemId)
@@ -300,7 +305,7 @@ bool AFMSimManager::UseConsumable(int32 ItemId)
 
 	Sim.IssueCommand(SelectedUnitId, c, false);
 	SelectedUnitId = 0;
-	bRingHidden = false;
+	bTargeting = false;
 	return true;
 }
 
@@ -342,7 +347,7 @@ void AFMSimManager::IssueDefendSelected()
 	c.type = CommandType::Defend;
 	Sim.IssueCommand(SelectedUnitId, c, false);
 	SelectedUnitId = 0;   // 명령 후 선택 해제 → 링 사라짐
-	bRingHidden = false;
+	bTargeting = false;
 }
 
 void AFMSimManager::IssueStopSelected()
@@ -352,7 +357,7 @@ void AFMSimManager::IssueStopSelected()
 	c.type = CommandType::Stop;
 	Sim.IssueCommand(SelectedUnitId, c, false);
 	SelectedUnitId = 0;   // 명령 후 선택 해제 → 링 사라짐
-	bRingHidden = false;
+	bTargeting = false;
 }
                   
 
@@ -363,7 +368,7 @@ void AFMSimManager::IssueFocusSelected()
 	c.type = CommandType::Focus;
 	Sim.IssueCommand(SelectedUnitId, c, false);
 	SelectedUnitId = 0;   // 명령 후 선택 해제 → 링 사라짐
-	bRingHidden = false;
+	bTargeting = false;
 }
 
 TArray<FSkillInfo> AFMSimManager::GetSelectedUnitSkills() const
@@ -383,6 +388,8 @@ TArray<FSkillInfo> AFMSimManager::GetSelectedUnitSkills() const
 		Info.MpCost      = s.mpCost;
 		Info.Cooldown    = s.cooldown;
 		Info.CdRemaining = s.cdRemaining;
+		Info.TargetMode   = (int32)s.targetMode;
+		Info.TargetFilter = (int32)s.targetFilter;
 		switch (s.type)
 		{
 		case SkillType::Charge:    Info.Name = TEXT("돌진");     break;
@@ -394,4 +401,51 @@ TArray<FSkillInfo> AFMSimManager::GetSelectedUnitSkills() const
 		Out.Add(Info);
 	}
 	return Out;
+}
+
+FSkillInfo AFMSimManager::FindSkillInfo(int32 SkillType) const
+{
+	for (const FSkillInfo& Info : GetSelectedUnitSkills())
+		if (Info.SkillType == SkillType)
+			return Info;
+	return FSkillInfo();   // 못 찾음 (SkillType=0)
+}
+
+uint64 AFMSimManager::FindUnitNearFiltered(const FVector& WorldPos, float Radius, int32 Filter) const
+{
+	// 기준 진영 = 시전자(선택 유닛)의 진영
+	auto SelIt = Sim.Units().find(SelectedUnitId);
+	if (SelIt == Sim.Units().end()) return 0;
+	const Faction MyFaction = SelIt->second.faction;
+
+	uint64 Best = 0;
+	float  BestDist = Radius;
+	for (const auto& Pair : Sim.Units())
+	{
+		const Unit& U = Pair.second;
+		if (!U.alive) continue;
+
+		// 진영 필터
+		if (Filter == (int32)TargetFilter::Ally  && U.faction != MyFaction) continue;
+		if (Filter == (int32)TargetFilter::Enemy && U.faction == MyFaction) continue;
+
+		float D = FVector::Dist2D(WorldPos, FVector(U.pos.x, U.pos.y, U.pos.z));
+		if (D < BestDist) { BestDist = D; Best = Pair.first; }
+	}
+	return Best;
+}
+
+void AFMSimManager::CastSkillAtPoint(int32 SkillType, const FVector& WorldPos)
+{
+	if (SelectedUnitId == 0) return;
+
+	Command c;
+	c.type          = CommandType::Skill;
+	c.skillId       = (uint32)SkillType;
+	c.targetPos     = Vec3{ (float)WorldPos.X, (float)WorldPos.Y, 0.f };   // Z는 Sim 지면
+	c.hasTargetPos  = true;
+
+	Sim.IssueCommand(SelectedUnitId, c, false);
+	SelectedUnitId = 0;
+	bTargeting     = false;
 }

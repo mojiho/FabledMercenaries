@@ -14,6 +14,8 @@ struct FSkillInfo
 	UPROPERTY(BlueprintReadOnly) int32   MpCost = 0;
 	UPROPERTY(BlueprintReadOnly) float   Cooldown = 0.f;
 	UPROPERTY(BlueprintReadOnly) float   CdRemaining = 0.f;
+	UPROPERTY(BlueprintReadOnly) int32 TargetMode   = 0;
+	UPROPERTY(BlueprintReadOnly) int32 TargetFilter = 0;
 };
 
 // 주의: 엔진 Slate(STreeView.h)에 이미 FItemInfo가 있어 이름 충돌 → FM 접두사 필수
@@ -28,6 +30,7 @@ struct FFMItemInfo
 	UPROPERTY(BlueprintReadOnly) int32   Count = 0;
 };
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FFMMenuCancel);
 UCLASS()
 class FABLEDMERCENARIES_API AFMSimManager : public AActor
 {
@@ -79,10 +82,15 @@ public:
 	void MoveSelectedTo(const FVector& WorldPos);
 	
 	UFUNCTION(BlueprintPure, Category = "Sim")
-	bool HasSelectedUnit() const { return SelectedUnitId != 0 && !bRingHidden; }
+	bool HasSelectedUnit() const { return SelectedUnitId != 0 && !bMenuOpen && !bTargeting; }
 
-	void SetRingHidden(bool bInHidden) { bRingHidden = bInHidden; }
+	/** 링 표시 숨김/복구 — 스킬·아이템 목록이 열릴 때 숨기고 닫힐 때 되돌린다 */
+	UFUNCTION(BlueprintCallable, Category = "Sim")
+	void SetRingHidden(bool bInHidden) { bMenuOpen = bInHidden; }
 
+	/** 대상 클릭 대기 상태 (c++ 전용)*/
+	void SetTargeting(bool bIn) {bTargeting = bIn;};
+	
 	/** 선택 유닛 방어 태세 */
 	void IssueDefendSelected();
 	
@@ -100,6 +108,25 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Command")
 	TArray<FSkillInfo> GetSelectedUnitSkills() const;
 	
+	/** 선택 유닛의 특정 스킬 정보. 없으면 SkillType=0인 빈 값 */
+	FSkillInfo FindSkillInfo(int32 SkillType) const;
+
+	/** 진영 필터를 적용한 유닛 탐색 (0=Any 1=Ally 2=Enemy) */
+	uint64 FindUnitNearFiltered(const FVector& WorldPos, float Radius, int32 Filter) const;
+
+	/** 지면 좌표를 대상으로 스킬 시전 (Point 모드) */
+	void CastSkillAtPoint(int32 SkillType, const FVector& WorldPos);
+
+	/** 열려 있는 목록 창을 닫으라는 신호 (UMG가 구독) */
+	UPROPERTY(BlueprintAssignable, Category = "Sim")
+	FFMMenuCancel OnMenuCancel;
+
+	UFUNCTION(BlueprintPure, Category = "Sim")
+	bool IsMenuOpen() const { return bMenuOpen; }
+
+	/** 목록 창 닫기 요청 — 선택은 유지된다 */
+	void CancelMenu() { if (bMenuOpen) OnMenuCancel.Broadcast(); }
+	
 protected:
 	virtual void BeginPlay() override;
 private:
@@ -112,7 +139,9 @@ private:
 	// UE 바닥 높이(클릭 트레이스 Z≈210). Sim 지면(z=0)을 이 높이에 얹어서 그림
 	static constexpr float GroundZ = 210.f;
 
-	bool bRingHidden = false;	// 링 표시 숨김 여부 (UMG에서 설정)
+	bool bMenuOpen = false;	// 링 표시 숨김 여부 (UMG에서 설정)
+	
+	bool bTargeting = false;	// 대상, 목적지 클릭 대기 중 (컨트롤러가 설정)
 	
 	TMap<uint64, TObjectPtr<class AFMUnit>> UnitActors;   // Sim id → 화면 액터
 

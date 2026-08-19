@@ -310,9 +310,9 @@ void CombatSim::Tick(float dt)
 				}
 				else if (sk->type == SkillType::Heal)
 				{
-					if (Unit* ally = GetUnit(u.current.targetId))
-						if (ally->alive)
-							ally->hp = std::min(ally->maxHp, ally->hp + sk->damage);  // 회복(최대 HP 상한)
+					Unit* ally = u.current.targetId ? GetUnit(u.current.targetId) : &u;
+					if (ally && ally->alive)
+						ally->hp = std::min(ally->maxHp, ally->hp + sk->damage);
 				}
 			}
 
@@ -323,15 +323,16 @@ void CombatSim::Tick(float dt)
 		}
 		case CommandType::Item:
 		{
-			const ItemDef def = GetItemDef(u.current.itemId);
-			if (def.type == ItemType::None) { done = true; break; }   // 모르는 아이템
+			const ItemType   it  = (ItemType)u.current.itemId;
+			const ItemDef    def = GetItemDef(u.current.itemId);
+			if (it == ItemType::None) { done = true; break; }   // 모르는 아이템
 
 			// 선딜 완료 순간 1회 발동 (스킬과 동일한 사이클)
 			if (!u.attackFired && u.execGauge >= def.preDelay)
 			{
 				u.attackFired = true;
 
-				if (def.type == ItemType::HealPotion)
+				if (it == ItemType::HealPotion)
 				{
 					// targetId 0 = 자신에게 사용
 					Unit* t = u.current.targetId ? GetUnit(u.current.targetId) : &u;

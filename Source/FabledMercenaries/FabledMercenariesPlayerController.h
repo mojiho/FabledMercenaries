@@ -169,7 +169,8 @@ protected:
 
 	bool bSkillMode = false;                    // 스킬 대상 클릭 대기 중
 	int32 PendingSkillType = 0;                 // 시전 대기 중인 스킬(Sim SkillType 값)
-
+	int32 PendingTargetMode = 0;                // 0=즉시 1=유닛 2=지점
+	int32 PendingTargetFilter = 0;              // 0=Any 1=Ally 2=Enemy
 };
 
 

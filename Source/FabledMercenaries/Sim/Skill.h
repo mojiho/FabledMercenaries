@@ -4,6 +4,8 @@
 enum class SkillCategory : uint8_t { Passive, Active };
 enum class SkillType : uint8_t { None, Defense, Charge, MagicBolt, Heal /*, Attack, Dash, Buff, Escape … 확장 */ };
 enum class DefenseKind : uint8_t { None, Parry, Block, Dodge };
+enum class TargetMode : uint8_t {Instant, Unit, Point};  // 즉시, 유닛, 지점
+enum class TargetFilter : uint8_t {Any, Ally, Enemy};
 
 // 스킬 1개 (패시브/액티브 공통). 평면 구조 = 서버 직렬화 용이.
 struct Skill
@@ -25,6 +27,9 @@ struct Skill
 	float         chance = 0.f;   // 방어 성공 확률 0~1
 
 	// [category==Active] 나중에: float mpCost; float range; ... (현재 미사용)
+	
+	TargetMode targetMode = TargetMode::Unit;
+	TargetFilter targetFilter = TargetFilter::Any;
 };
 
 // 방어 패시브 스킬 만들기 (헬퍼)

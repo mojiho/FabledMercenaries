@@ -56,6 +56,7 @@ void AFM_CommanderAvatar::IssueMove(const FVector& WorldPos, bool bReserve)
 {
 	Command cmd;
 	cmd.type = CommandType::Move;
-	cmd.waypoints.push_back(Vec3{ WorldPos.X, WorldPos.Y, WorldPos.Z });
+	// UE FVector는 double, Sim Vec3는 float → 중괄호 초기화는 축소 변환을 막으므로 명시 캐스트
+	cmd.waypoints.push_back(Vec3{ (float)WorldPos.X, (float)WorldPos.Y, (float)WorldPos.Z });
 	Sim.IssueCommand(MyUnitId, cmd, bReserve);
 }

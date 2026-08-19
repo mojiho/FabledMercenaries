@@ -16,6 +16,7 @@
 #include "FabledMercenaries.h"
 #include "FMSimManager.h"
 #include "Sim/Item.h"
+#include "Sim/Skill.h"
 #include "Core/FM_CameraPawn.h"
 #include "Engine/Engine.h"
 #include "Kismet/GameplayStatics.h"
@@ -143,12 +144,23 @@ void AFabledMercenariesPlayerController::OnClickCommand()
 		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass()));
 	if (!Mgr) return;
 
-	// ── 스킬 모드: 클릭한 유닛을 대상으로 스킬 시전 ──
+	// ── 스킬 모드: 조준 방식에 따라 분기 ──
 	if (bSkillMode)
 	{
-		uint64 Target = Mgr->FindUnitNear(Hit.Location, 60.f);   // 아군/적 아무 유닛
-		if (Target != 0)
-			Mgr->CastSkill(PendingSkillType, Target);
+		if (PendingTargetMode == (int32)TargetMode::Point)
+		{
+			// 사용 위치 지정 — 클릭한 지면 좌표로 시전
+			Mgr->CastSkillAtPoint(PendingSkillType, Hit.Location);
+		}
+		else
+		{
+			// 유닛 지정 — 진영 필터에 맞는 유닛만
+			uint64 Target = Mgr->FindUnitNearFiltered(Hit.Location, 60.f, PendingTargetFilter);
+			if (Target != 0)
+				Mgr->CastSkill(PendingSkillType, Target);
+			else
+				Mgr->SetTargeting(false);   // 유효 대상 없음 = 취소, 링 복구
+		}
 		bSkillMode = false;
 		return;
 	}
@@ -167,15 +179,25 @@ void AFabledMercenariesPlayerController::OnClickCommand()
 
 void AFabledMercenariesPlayerController::ChooseSkill(int32 SkillType)
 {
+	AFMSimManager* Mgr = Cast<AFMSimManager>(UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass()));
+	if (!Mgr) return;
+	
+	const FSkillInfo Info = Mgr->FindSkillInfo(SkillType);
+	if (Info.SkillType == 0) return;		// 스킬 타입 에러
+	
+	// -- 즉시 발동 : 조준 단계 없이 바로 시전 --
+	if (Info.TargetMode == (int32)TargetMode::Instant)
+	{
+		Mgr->CastSkill(SkillType, 0);
+		return;
+	}
+	
+	// 유닛 지점 지정 : 클릭 대기 모드.
 	bSkillMode = true;
 	PendingSkillType = SkillType;
-
-	// 링 숨김 (선택은 유지 → 어느 유닛이 시전할지 앎)
-	if (AFMSimManager* Mgr = Cast<AFMSimManager>(
-		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
-	{
-		Mgr->SetRingHidden(true);
-	}
+	PendingTargetMode = Info.TargetMode;
+	PendingTargetFilter = Info.TargetFilter;
+	Mgr->SetTargeting(true);	// 링 숨김 (선택은 유지 → 어느 유닛이 시전할지 앎)
 }
 
 void AFabledMercenariesPlayerController::OnLeftReleased()
@@ -327,13 +349,22 @@ void AFabledMercenariesPlayerController::OnRightClickReleased()
 
 void AFabledMercenariesPlayerController::OnRightClickCommand()
 {
-	bMoveMode = false;          // ← 이동 모드 취소
-	PendingWaypoints.Empty();   // ← 예약 점들 비우기
-	if (AFMSimManager* Mgr = Cast<AFMSimManager>(
-		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
+	AFMSimManager* Mgr = Cast<AFMSimManager>(
+		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass()));
+
+	// 목록이 떠 있으면 → 목록만 닫고 선택 유지 (= 링으로 복귀)
+	if (Mgr && Mgr->IsMenuOpen())
 	{
-		Mgr->ClearSelection();
+		Mgr->CancelMenu();
+		bSkillMode = false;
+		return;
 	}
+
+	// 평소 취소: 모드 해제 + 선택 해제
+	bMoveMode  = false;
+	bSkillMode = false;
+	PendingWaypoints.Empty();
+	if (Mgr) Mgr->ClearSelection();
 }
 
 void AFabledMercenariesPlayerController::EnterMoveMode()
@@ -345,7 +376,7 @@ void AFabledMercenariesPlayerController::EnterMoveMode()
 	if (AFMSimManager* Mgr = Cast<AFMSimManager>(
 		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
 	{
-		Mgr->SetRingHidden(true);      // ← 버튼 누른 순간 링 사라짐 (선택은 유지)
+		Mgr->SetTargeting(true);      // ← 버튼 누른 순간 링 사라짐 (선택은 유지)
 	}
 
 }
