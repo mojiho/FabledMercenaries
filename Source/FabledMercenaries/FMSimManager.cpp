@@ -166,7 +166,13 @@ uint64 AFMSimManager::FindUnitNear(const FVector& WorldPos, float Radius) const
 void AFMSimManager::HandleClick(const FVector& WorldPos)
 {
 	const uint64 Prev = SelectedUnitId;
-	SelectedUnitId = FindUnitNear(WorldPos, 50.f);   // 근처 유닛 선택, 없으면 0(해제)
+	const uint64 Hit = FindUnitNear(WorldPos, 50.f);
+
+	UE_LOG(LogTemp, Warning, TEXT("[FM][DBG] HandleClick hit=%llu prev=%llu"), Hit, Prev);
+
+	if (Hit == 0) return;
+
+	SelectedUnitId = Hit;
 	bTargeting = false;
 	
 	// 리스트가 떠 있는데 다른 유닛을 골랐으면 → 리스트 닫고 링 복귀
@@ -269,14 +275,21 @@ void AFMSimManager::CastSkill(int32 SkillType, uint64 TargetId)
 	c.skillId = (uint32)SkillType;   // Sim SkillType 값
 	c.targetId = TargetId;           // 대상(공격=적, 힐=아군, 자기강화=자신)
 
-	Sim.IssueCommand(SelectedUnitId, c, false);
+	const CommandResult R = Sim.IssueCommand(SelectedUnitId, c, false);
+	if (const Unit* U = Sim.GetUnit(SelectedUnitId))
+		UE_LOG(LogTemp, Warning, TEXT("[FM][DBG] CastSkill unit=%llu skill=%d target=%llu result=%d mp=%.1f"),
+			SelectedUnitId, SkillType, TargetId, (int32)R, U->mp);
+
 	SelectedUnitId = 0;
 	bTargeting = false;
+	CancelMenu();
 }
 
 bool AFMSimManager::ActivateItem(int32 ItemId)
 {
 	const ItemDef Def = GetItemDef((uint32)ItemId);
+	UE_LOG(LogTemp, Warning, TEXT("[FM][DBG] ActivateItem id=%d cat=%d sel=%llu"),
+		ItemId, (int32)Def.category, SelectedUnitId);
 	switch (Def.category)
 	{
 	case ItemCategory::Consumable: return UseConsumable(ItemId);   // 지금 코드 그대로 옮김
@@ -306,6 +319,7 @@ bool AFMSimManager::UseConsumable(int32 ItemId)
 	Sim.IssueCommand(SelectedUnitId, c, false);
 	SelectedUnitId = 0;
 	bTargeting = false;
+	CancelMenu();          // 사용 후 목록 창 닫기
 	return true;
 }
 
@@ -390,6 +404,8 @@ TArray<FSkillInfo> AFMSimManager::GetSelectedUnitSkills() const
 		Info.CdRemaining = s.cdRemaining;
 		Info.TargetMode   = (int32)s.targetMode;
 		Info.TargetFilter = (int32)s.targetFilter;
+		// MP 부족하거나 쿨다운 중이면 시전 불가 → UI가 버튼을 회색으로
+		Info.bCanCast     = (It->second.mp >= (float)s.mpCost) && (s.cdRemaining <= 0.f);
 		switch (s.type)
 		{
 		case SkillType::Charge:    Info.Name = TEXT("돌진");     break;

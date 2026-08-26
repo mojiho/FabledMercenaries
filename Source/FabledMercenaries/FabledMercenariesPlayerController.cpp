@@ -156,6 +156,8 @@ void AFabledMercenariesPlayerController::OnClickCommand()
 		{
 			// 유닛 지정 — 진영 필터에 맞는 유닛만
 			uint64 Target = Mgr->FindUnitNearFiltered(Hit.Location, 60.f, PendingTargetFilter);
+			UE_LOG(LogTemp, Warning, TEXT("[FM][DBG] SkillClick target=%llu skill=%d filter=%d"),
+				Target, PendingSkillType, PendingTargetFilter);
 			if (Target != 0)
 				Mgr->CastSkill(PendingSkillType, Target);
 			else
@@ -183,11 +185,15 @@ void AFabledMercenariesPlayerController::ChooseSkill(int32 SkillType)
 	if (!Mgr) return;
 	
 	const FSkillInfo Info = Mgr->FindSkillInfo(SkillType);
+	UE_LOG(LogTemp, Warning, TEXT("[FM][DBG] ChooseSkill req=%d found=%d mode=%d filter=%d"),
+		SkillType, Info.SkillType, Info.TargetMode, Info.TargetFilter);
 	if (Info.SkillType == 0) return;		// 스킬 타입 에러
+	if (!Info.bCanCast) return;				// MP 부족 / 쿨다운 중 (버튼도 비활성이지만 이중 방어)
 	
 	// -- 즉시 발동 : 조준 단계 없이 바로 시전 --
 	if (Info.TargetMode == (int32)TargetMode::Instant)
 	{
+		Mgr->CancelMenu();          // 목록 창 닫기
 		Mgr->CastSkill(SkillType, 0);
 		return;
 	}
@@ -198,6 +204,7 @@ void AFabledMercenariesPlayerController::ChooseSkill(int32 SkillType)
 	PendingTargetMode = Info.TargetMode;
 	PendingTargetFilter = Info.TargetFilter;
 	Mgr->SetTargeting(true);	// 링 숨김 (선택은 유지 → 어느 유닛이 시전할지 앎)
+	Mgr->CancelMenu();			// 목록 창 닫기 (대상 클릭을 가리지 않게)
 }
 
 void AFabledMercenariesPlayerController::OnLeftReleased()
@@ -398,6 +405,48 @@ void AFabledMercenariesPlayerController::PlayerTick(float DeltaTime)
                 const FVector Tgt(SelPos.X, SelPos.Y, Cur.Z);   // XY만 따라감(높이·각도는 유지)
                 Cam->SetActorLocation(FMath::VInterpTo(Cur, Tgt, DeltaTime, 10.f));
             }
+        }
+    }
+
+    // ── 스킬 대상 지정 중: 커서 바닥에 조준 표시 ──
+    if (bSkillMode)
+    {
+        FHitResult SkHit;
+        AFMSimManager* SkMgr = Cast<AFMSimManager>(
+            UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass()));
+
+        if (SkMgr && GetHitResultUnderCursor(ECC_Visibility, false, SkHit))
+        {
+            const FVector Ground = SkHit.Location + FVector(0, 0, 5.f);
+            const bool bPointMode = (PendingTargetMode == (int32)TargetMode::Point);
+
+            // 커서 아래에 유효 대상이 있나 (OnClickCommand와 같은 반경/필터)
+            const uint64 Target = bPointMode ? 0
+                : SkMgr->FindUnitNearFiltered(SkHit.Location, 60.f, PendingTargetFilter);
+            const bool bValid = bPointMode || (Target != 0);
+
+            const FColor Col = bValid ? FColor(80, 255, 120) : FColor(255, 190, 60);
+
+            // 조준 커서 (이중 원)
+            DrawDebugCircle(GetWorld(), Ground, 70.f, 32, Col, false, -1.f, 0, 3.f,
+                FVector(1, 0, 0), FVector(0, 1, 0), false);
+            DrawDebugCircle(GetWorld(), Ground, 25.f, 24, Col, false, -1.f, 0, 2.f,
+                FVector(1, 0, 0), FVector(0, 1, 0), false);
+
+            // 시전자 → 커서 연결선
+            FVector CasterPos;
+            if (SkMgr->GetSelectedUnitWorldPos(CasterPos))
+                DrawGroundLine(CasterPos + FVector(0, 0, 15.f), Ground + FVector(0, 0, 10.f), Col);
+
+            // 유효 대상이면 그 유닛 강조
+            FVector TargetPos;
+            if (Target != 0 && SkMgr->GetUnitWorldPos(Target, TargetPos))
+                DrawDebugSphere(GetWorld(), TargetPos, 55.f, 16, Col, false, -1.f, 0, 3.f);
+
+            // 상태 문구 (DeltaTime 만큼만 유지 = 매 프레임 갱신)
+            DrawDebugString(GetWorld(), Ground + FVector(0, 0, 70.f),
+                bValid ? TEXT("스킬 시전 - 대상 선택") : TEXT("스킬 시전 - 대상 없음"),
+                nullptr, Col, DeltaTime, true);
         }
     }
 

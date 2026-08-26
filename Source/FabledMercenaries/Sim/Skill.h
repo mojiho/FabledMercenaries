@@ -53,6 +53,8 @@ inline Skill MakeCharge(float preDelay, float postDelay, float cooldown, int mpC
 	s.postDelay = postDelay;
 	s.cooldown = cooldown;
 	s.mpCost = mpCost;
+	s.targetMode = TargetMode::Unit;        // 적 유닛 지정
+	s.targetFilter = TargetFilter::Enemy;
 	return s;
 }
 
@@ -66,6 +68,8 @@ inline Skill MakeMagicBolt(float damage, float preDelay, float postDelay, float 
 	s.postDelay = postDelay;
 	s.cooldown = cooldown;
 	s.mpCost = mpCost;
+	s.targetMode = TargetMode::Unit;        // 적 유닛 지정
+	s.targetFilter = TargetFilter::Enemy;
 	return s;
 }
 
@@ -79,6 +83,8 @@ inline Skill MakeHeal(float healAmount, float preDelay, float postDelay, float c
 	s.postDelay = postDelay;
 	s.cooldown = cooldown;
 	s.mpCost = mpCost;
+	s.targetMode = TargetMode::Unit;        // 아군 유닛 지정
+	s.targetFilter = TargetFilter::Ally;
 	return s;
 }
 
@@ -90,5 +96,6 @@ inline Skill MakeDefenseStance(DefenseKind kind, float blockChance, float attack
 	s.defenseKind = kind;
 	s.chance = blockChance;
 	s.attackSlow = attackSlow;
+	s.targetMode = TargetMode::Instant;     // 조준 없이 즉시 토글
 	return s;
 }

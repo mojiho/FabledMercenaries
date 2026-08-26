@@ -16,6 +16,9 @@ struct FSkillInfo
 	UPROPERTY(BlueprintReadOnly) float   CdRemaining = 0.f;
 	UPROPERTY(BlueprintReadOnly) int32 TargetMode   = 0;
 	UPROPERTY(BlueprintReadOnly) int32 TargetFilter = 0;
+
+	/** 지금 시전 가능한가 (MP 충분 + 쿨다운 끝). false면 UI에서 버튼 비활성 */
+	UPROPERTY(BlueprintReadOnly) bool  bCanCast = true;
 };
 
 // 주의: 엔진 Slate(STreeView.h)에 이미 FItemInfo가 있어 이름 충돌 → FM 접두사 필수
