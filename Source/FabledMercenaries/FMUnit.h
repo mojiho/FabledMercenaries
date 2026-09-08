@@ -2,6 +2,7 @@
 #include "GameFramework/Actor.h"
 #include "FMUnit.generated.h"
 
+class UAnimMontage;
 UENUM(BlueprintType)
 enum class EUnitAnim : uint8
 {
@@ -32,7 +33,28 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Unit")
 	float Speed = 0.f;
 	
+	UPROPERTY(EditAnywhere, Category="Anim") TObjectPtr<UAnimMontage> AttackMontage;
+	UPROPERTY(EditAnywhere, Category="Anim") TObjectPtr<UAnimMontage> HitMontage;
+	UPROPERTY(EditAnywhere, Category="Anim") TObjectPtr<UAnimMontage> DeathMontage;
+	UPROPERTY(EditAnywhere, Category="Anim") TMap<int32, TObjectPtr<UAnimMontage>> SkillMontages; // 
+	
+	UPROPERTY(BlueprintReadOnly, Category="Unit") bool bDead = false;
+	
+	void NotifyAttackFired();
+	void NotifyDamaged(bool bFromBehind, bool bCrit);
+	void NotifyDeath();
+	void NotifySkillCast(int32 SkillType);
+	
+	// 이펙트/사운드는 BP에서 붙이는 게 편함
+	UFUNCTION(BlueprintImplementableEvent, Category="Unit") void BP_OnAttackFired();
+	UFUNCTION(BlueprintImplementableEvent, Category="Unit") void BP_OnDamaged(bool bFromBehind, bool bCrit);
+	UFUNCTION(BlueprintImplementableEvent, Category="Unit") void BP_OnDeath();
+	UFUNCTION(BlueprintImplementableEvent, Category="Unit") void BP_OnSkillCast(int32 SkillType);
+	
+	
 private:
+	void PlayOneShot(UAnimMontage* M, float Rate = 1.f);
+	
 	FVector PrevLoc = FVector::ZeroVector;   // 속도 계산용 이전 위치
 	bool bHasPrev = false;
 };

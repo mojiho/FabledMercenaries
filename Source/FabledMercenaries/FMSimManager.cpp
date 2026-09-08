@@ -32,6 +32,7 @@ AFMSimManager::AFMSimManager()
 void AFMSimManager::BeginPlay()
 {
 	Super::BeginPlay();
+	BindSimCallbacks();   // 유닛 등록보다 먼저 — 첫 Tick 전에 콜백이 걸려 있어야 함
 	Sim.AddCommander(1, CommanderType::Command);
 
 	// 메타 인벤토리 초기 지급 (P0 테스트용 — 나중에 로스터/상점으로 대체)
@@ -75,10 +76,49 @@ void AFMSimManager::BeginPlay()
 	UE_LOG(LogTemp, Warning, TEXT("[FM] SimManager BeginPlay, units=%d"), (int32)Sim.Units().size());
 }
 
+void AFMSimManager::BindSimCallbacks()
+{
+	Sim.OnAttackFired = [this](uint64_t Id)
+	{ PendingEvents.Add({ ESimEvt::AttackFired, Id }); };
+
+	Sim.OnDamaged = [this](uint64_t Id, bool bBehind, bool bCrit)
+	{ PendingEvents.Add({ ESimEvt::Damaged, Id, 0, bBehind, bCrit }); };
+
+	Sim.OnDeath = [this](uint64_t Id)
+	{ PendingEvents.Add({ ESimEvt::Death, Id }); };
+
+	Sim.OnSkillCast = [this](uint64_t Id, SkillType T)
+	{ PendingEvents.Add({ ESimEvt::SkillCast, Id, (int32)T }); };
+
+	Sim.OnCommandComplete = [this](uint64_t Id, uint32_t Slot)
+	{ PendingEvents.Add({ ESimEvt::CmdComplete, Id, (int32)Slot }); };
+}
+
+void AFMSimManager::DrainSimEvents()
+{
+	for (const FSimEvent& E : PendingEvents)
+	{
+		TObjectPtr<AFMUnit>* Found = UnitActors.Find(E.UnitId);
+		if (!Found || !*Found) continue;
+		AFMUnit* A = Found->Get();
+
+		switch (E.Kind)
+		{
+		case ESimEvt::AttackFired: A->NotifyAttackFired();                    break;
+		case ESimEvt::Damaged:     A->NotifyDamaged(E.bFromBehind, E.bCrit);  break;
+		case ESimEvt::Death:       A->NotifyDeath();                          break;
+		case ESimEvt::SkillCast:   A->NotifySkillCast(E.Param);               break;
+		case ESimEvt::CmdComplete: /* 지금은 무시 (나중에 UI 피드백) */       break;
+		}
+	}
+	PendingEvents.Reset();
+}
+
 void AFMSimManager::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	Sim.Tick(DeltaSeconds);			// Sim 한 스텝 진행
+	DrainSimEvents();
 	// 디버그용 : 모든 유닛 위치 표시
 	for (const auto& Pair : Sim.Units())
 	{
@@ -156,6 +196,7 @@ uint64 AFMSimManager::FindUnitNear(const FVector& WorldPos, float Radius) const
 	for (const auto& Pair : Sim.Units())
 	{
 		const Unit& U = Pair.second;
+		if (!U.alive) continue;   // 시체는 선택 대상 아님 (액터는 남아도 클릭은 통과)
 		// 탑다운 선택 → Z 무시하고 XY 평면 거리만 비교 (클릭은 바닥 Z, 유닛은 Sim z=0이라 3D로 하면 절대 안 잡힘)
 		float D = FVector::Dist2D(WorldPos, FVector(U.pos.x, U.pos.y, U.pos.z));
 		if (D < BestDist) { BestDist = D; Best = Pair.first; }   // Pair.first = 유닛 id

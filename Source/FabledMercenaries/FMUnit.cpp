@@ -1,5 +1,8 @@
 #include "FMUnit.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Animation/AnimInstance.h"   // UAnimInstance::Montage_Play
+#include "Animation/AnimMontage.h"    // UAnimMontage 정의
+
 
 AFMUnit::AFMUnit()
 {
@@ -25,3 +28,37 @@ void AFMUnit::UpdateFromSim(const FVector& Loc, const FVector& FacingDir, EUnitA
 	}
 	Anim = NewAnim;
 }
+
+void AFMUnit::PlayOneShot(UAnimMontage* M, float Rate)
+{
+	if (!M || !Mesh) return;
+	if (UAnimInstance* Inst = Mesh->GetAnimInstance())
+		Inst->Montage_Play(M, Rate);
+}
+
+void AFMUnit::NotifyAttackFired()
+{
+	PlayOneShot(AttackMontage);
+	BP_OnAttackFired();
+}
+
+void AFMUnit::NotifyDamaged(bool bFromBehind, bool bCrit)
+{
+	if (bCrit) PlayOneShot(HitMontage);   // 매 타격마다 끊으면 지저분함 → 크리만 권장
+	BP_OnDamaged(bFromBehind, bCrit);
+}
+
+void AFMUnit::NotifyDeath()
+{
+	bDead = true;
+	PlayOneShot(DeathMontage);
+	BP_OnDeath();
+}
+
+void AFMUnit::NotifySkillCast(int32 SkillType)
+{
+	if (TObjectPtr<UAnimMontage>* M = SkillMontages.Find(SkillType))
+		PlayOneShot(M->Get());
+	BP_OnSkillCast(SkillType);
+}
+

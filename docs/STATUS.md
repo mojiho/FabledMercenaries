@@ -1,6 +1,6 @@
 # Fabled Mercenaries — 진행 현황 & 다음 할 일 (STATUS)
 
-> 단일 "지금 어디까지 했고 다음에 뭐 할지" 참조. 최종 갱신: **2026-08-11**.
+> 단일 "지금 어디까지 했고 다음에 뭐 할지" 참조. 최종 갱신: **2026-09-08**.
 > 관련 문서: 전투/클래스 설계 `combat_class_design.md`, P0 프로토타입 설계 `prototype_phase_p0_design.md`, 서버 설계 `server_technical_design_v2.md`, **아트 파이프라인 `art_pipeline.md`**.
 >
 > 제약 메모: 1인 **프로그래머** — 코드/개발 시간 충분, **병목은 아트(특히 3D 모델링)**. 전략은 `art_pipeline.md` 참조(베이스 에셋+Mixamo+툰 셰이더+모듈러로 우회).
@@ -83,21 +83,39 @@ P0 싱글 프로토타입의 **엔진 비의존 전투 Sim 코어** 검증 완�
 
 ## 2. 📁 코드 위치 & ⚠️ 동기화 경고
 
-- **`MMO/SimTesst/SimTesst/`** — 콘솔 테스트 프로젝트. **현재 Sim 코어의 정본**(여기서 작업·검증). 별도 솔루션.
-- **`MMO/Client/`** — UE5 프로젝트(`FabledMercenaries`, git: `mojiho/FabledMercenaries.git`). `Source/FabledMercenaries/Sim/`에 **오래된 Sim 사본**(SimTesst와 갈라짐).
-- ⚠️ **두 사본이 어긋나 있음.** 집에서 UE 작업하려면 **SimTesst의 최신 Sim 파일을 UE 프로젝트로 복사·동기화**해야 함. (`docs/`도 git 밖이라 같이 옮겨야 집에서 보임.)
+- **`MMO/Client/`** — UE5 프로젝트(`FabledMercenaries`, git: `mojiho/FabledMercenaries.git`). `Source/FabledMercenaries/Sim/`.
+  **← 2026-09-08 기준 Sim 코어의 정본.** UE 와이어링을 하면서 Sim에 기능이 계속 추가돼 여기가 가장 앞섬.
+- **`MMO/SimTesst/SimTesst/`** — 콘솔 테스트 프로젝트. 별도 솔루션. **현재 stale**(마지막 갱신 2026-06-30).
+- **`MMO/Server/`** — 서버. Sim 사본 보유. 게임시스템(코스트/지휘관/불복종) 설계 정본이지만, **구현은 Client가 앞서 있음**.
 
-**파일 목록(SimTesst → UE로 복사 대상, 12개)**: `Vec3.h, Command.h, Skill.h, Brain.h, Class.h, Unit.h, Commander.h, Projectile.h, CombatSim.h, CombatSim.cpp, AIBrain.h, AIBrain.cpp`. (`main.cpp`는 콘솔 테스트용이라 제외) — **2026-06-30 동기화 완료.**
+### ⚠️ 동기화 방향이 역전됐음 (2026-09-08 재확인)
+
+예전 메모는 "SimTesst → Client"였으나 **지금은 반대**다. 전 파일을 diff한 결과
+**SimTesst에만 있고 Client에 없는 코드는 0건**, 즉 Client가 일방적으로 앞서 있다.
+다음 서버 작업 전에 **Client → SimTesst/Server** 방향으로 옮길 것.
+
+| 파일 | Client에만 있는 것 |
+|---|---|
+| **`Item.h`** | **신규 파일 전체** (`ItemType`/`ItemCategory`/`ItemDef`/`GetItemDef`) |
+| `Command.h` | `CommandType::Item`, `itemId`, `arriveFacing`/`hasArriveFacing`, `targetPos`/`hasTargetPos` |
+| `Skill.h` | `TargetMode`/`TargetFilter` enum + `Skill.targetMode`/`targetFilter` |
+| `Class.h` | `ClassStats.cost`(고용 코스트) + 클래스별 코스트 값 |
+| `Unit.h` | `Unit.cost`, `GetActionState()`의 `CommandType::Item` 케이스 |
+| `Commander.h` | `CommanderType`(전투형/지휘형), `Commander.type`, `costBudget`/`usedCost`, `MakeCommander()` |
+| `CombatSim.h/.cpp` | `CommandResult::Disobeyed`, `AddCommander(id, type)`, `_aiIssuing`, `DISOBEY_SLOPE`/`DISOBEY_MAX`(코스트 소프트캡 불복종), Item 명령 처리 |
+| `AIBrain.h/.cpp` | `GuardBrain`(어그로 반경 `GUARD_AGGRO=300` 내 자동 반격) |
+
+동일한 파일(복사 불필요): `Vec3.h, Brain.h, Projectile.h`.
+`Meta/Player.h`는 Sim 밖(메타 데이터)이라 서버 사본과 무관.
 
 ---
 
 ## 3. 🎯 다음 할 일 — 집(UE 가능 PC)에서
 
-### STEP 0 (필수 선행): Sim → UE 동기화
-1. SimTesst의 Sim `.h/.cpp` 11개를 `Client/Source/FabledMercenaries/Sim/`로 **복사(덮어쓰기)**.
-2. `docs/`도 `Client/docs/`로 복사(집에서 설계 보려면).
-3. UE 프로젝트 파일 재생성 → 컴파일 확인(엔진 비의존이라 통과해야 함).
-   - 주의: 예전에 UE 사본에서 "`Class` 미정의" 났던 건 사본이 stale했기 때문 — 최신본으로 덮으면 해결.
+### ~~STEP 0: SimTesst → UE 동기화~~ — ❌ **폐기 (방향 역전)**
+2026-06-30에 완료됐고, 그 이후로는 **Client가 정본**이다. 반대로 하면 최신 작업이 날아간다.
+지금 필요한 동기화는 **Client → SimTesst/Server**이며, 대상 목록은 §2 표 참조.
+(`docs/`는 이제 `Client/docs/`가 정본 — git에 포함됨.)
 
 ### STEP 1: UE 와이어링 (P0 마일스톤 2) — ✅ **완료** (상세: §0.5)
 > 목표: "Sim이 굴리는 유닛이 UE 화면에서 움직이는 것"부터. → 달성. 이동/선택/카메라/원형UI까지 확장됨. 현재 STEP 2(전투 시각화) 진행 중.
@@ -122,8 +140,8 @@ P0 싱글 프로토타입의 **엔진 비의존 전투 Sim 코어** 검증 완�
 - **탱커 생존력 보강(선택)** — 방어 태세는 정면 한정 85% 차단이라 **협공(암살자 측면 백스탭)에 우회**됨. "방어 중 가장 가까운 위협을 바라보기" / 협공 시 블록 보정 등으로 더 단단하게(현재도 시간 벌어 팀 승리엔 충분).
 - **충돌/접촉 규칙**(combat_class_design.md §7) — 전사/탱커 밀치고 전진, 방어 태세 탱커 충돌 시 반격뎀+스턴→명령 해제, 암살자 백스탭→모든 명령 취소·정지.
 - **상태이상 등급 체계** — 짧은 스턴=명령 해제 / 상급=명령 취소. (현재 `stunRemaining` 기본형만 있음)
-- **지휘관 유형** — 전투형/지휘형 분리.
-- **용병 코스트 소프트캡** — 코스트 초과 고용 시 명령 불복종 확률 상승.
+- ~~**지휘관 유형** — 전투형/지휘형 분리.~~ → ✅ **Client Sim에 구현됨** (`CommanderType`, `MakeCommander`). 수치 튜닝만 남음.
+- ~~**용병 코스트 소프트캡** — 코스트 초과 고용 시 명령 불복종 확률 상승.~~ → ✅ **Client Sim에 구현됨** (`costBudget`/`usedCost`, `DISOBEY_SLOPE`/`DISOBEY_MAX`, `CommandResult::Disobeyed`). 곡선 튜닝만 남음.
 - **전직 트리 / 강림(메타)** — 전사→양손검사/도끼전사 분기, 2~3차 전직 후 강림(전설 용병=영혼이 그릇에 빙의).
 - 기타 액티브 스킬·투사체 V2(이동 회피, 포물선 차단 규칙).
 

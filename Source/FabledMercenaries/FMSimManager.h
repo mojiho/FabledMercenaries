@@ -4,6 +4,17 @@
 #include "Meta/Player.h"
 #include "FMSimManager.generated.h"
 
+enum class ESimEvt : uint8 {AttackFired, Damaged, Death, SkillCast, CmdComplete};
+
+struct FSimEvent
+{
+	ESimEvt Kind;
+	uint64 UnitId = 0;
+	int32 Param = 0;
+	bool bFromBehind = false;
+	bool bCrit = false;
+};
+
 USTRUCT(BlueprintType)
 struct FSkillInfo
 {
@@ -17,8 +28,12 @@ struct FSkillInfo
 	UPROPERTY(BlueprintReadOnly) int32 TargetMode   = 0;
 	UPROPERTY(BlueprintReadOnly) int32 TargetFilter = 0;
 
-	/** 지금 시전 가능한가 (MP 충분 + 쿨다운 끝). false면 UI에서 버튼 비활성 */
-	UPROPERTY(BlueprintReadOnly) bool  bCanCast = true;
+	/**
+	 * 지금 시전 가능한가 (MP 충분 + 쿨다운 끝). false면 UI에서 버튼 비활성.
+	 * 기본값 false — FindSkillInfo가 "못 찾음"으로 빈 값을 돌려줄 때(선택 해제 등)
+	 * 버튼이 잘못 활성화되는 걸 막는다. GetSelectedUnitSkills는 항상 명시적으로 채움.
+	 */
+	UPROPERTY(BlueprintReadOnly) bool  bCanCast = false;
 };
 
 // 주의: 엔진 Slate(STreeView.h)에 이미 FItemInfo가 있어 이름 충돌 → FM 접두사 필수
@@ -111,7 +126,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Command")
 	TArray<FSkillInfo> GetSelectedUnitSkills() const;
 	
-	/** 선택 유닛의 특정 스킬 정보. 없으면 SkillType=0인 빈 값 */
+	/**
+	 * 선택 유닛의 특정 스킬 정보. 없으면 SkillType=0인 빈 값.
+	 * CdRemaining/bCanCast는 호출 시점 기준 실시간 값 → WBP_SkillRow가 Tick에서 불러
+	 * 쿨다운 표시·버튼 활성화를 갱신한다 (목록 전체를 다시 만들 필요 없음).
+	 */
+	UFUNCTION(BlueprintPure, Category = "Command")
 	FSkillInfo FindSkillInfo(int32 SkillType) const;
 
 	/** 진영 필터를 적용한 유닛 탐색 (0=Any 1=Ally 2=Enemy) */
@@ -129,6 +149,10 @@ public:
 
 	/** 목록 창 닫기 요청 — 선택은 유지된다 */
 	void CancelMenu() { if (bMenuOpen) OnMenuCancel.Broadcast(); }
+	
+	TArray<FSimEvent> PendingEvents;
+	void BindSimCallbacks();
+	void DrainSimEvents();
 	
 protected:
 	virtual void BeginPlay() override;
