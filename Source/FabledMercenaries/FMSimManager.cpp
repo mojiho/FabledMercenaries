@@ -6,6 +6,9 @@
 #include "Sim/AIBrain.h"
 #include "Sim/Item.h"
 #include "FMUnit.h"
+#include "FMGameInstance.h"
+#include "Kismet/GameplayStatics.h"
+#include "TimerManager.h"
 
 static EUnitAnim ToAnim(ActionState s)
 {
@@ -27,52 +30,67 @@ static EUnitAnim ToAnim(ActionState s)
 AFMSimManager::AFMSimManager()
 {
 	PrimaryActorTick.bCanEverTick = true;		// 매 프레임마다 Tick() 호출
+
+	// 기존에 BeginPlay에 하드코딩돼 있던 3v3을 그대로 데이터로 옮긴 것.
+	// 심볼 인카운터가 붙기 전까지 전투를 바로 띄워보는 용도.
+	DebugEncounter.EncounterId = TEXT("Debug_3v3");
+	DebugEncounter.Separation  = 600.f;
+
+	auto Add = [](TArray<FFMUnitSpawn>& Out, EFMClass C, float Y)
+	{
+		FFMUnitSpawn S;
+		S.UnitClass = C;
+		S.Offset    = FVector2D(0.f, Y);
+		Out.Add(S);
+	};
+	Add(DebugEncounter.Allies,  EFMClass::Warrior, -100.f);
+	Add(DebugEncounter.Allies,  EFMClass::Mage,       0.f);
+	Add(DebugEncounter.Allies,  EFMClass::Archer,   100.f);
+	Add(DebugEncounter.Enemies, EFMClass::Warrior, -100.f);
+	Add(DebugEncounter.Enemies, EFMClass::Tanker,     0.f);
+	Add(DebugEncounter.Enemies, EFMClass::Archer,   100.f);
+}
+
+MetaPlayer* AFMSimManager::MetaPtr() const
+{
+	UWorld* W = GetWorld();
+	UFMGameInstance* GI = W ? W->GetGameInstance<UFMGameInstance>() : nullptr;
+	if (!GI)
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("[FM] GameInstance가 UFMGameInstance가 아닙니다 — 프로젝트 세팅 > 맵&모드 > Game Instance Class를 FMGameInstance로 지정하세요. 인벤토리가 비어 보입니다."));
+		return nullptr;
+	}
+	return &GI->GetMeta();
 }
 
 void AFMSimManager::BeginPlay()
 {
 	Super::BeginPlay();
 	BindSimCallbacks();   // 유닛 등록보다 먼저 — 첫 Tick 전에 콜백이 걸려 있어야 함
+
+	// 지휘관은 레벨 수명 내내 유지된다 (유닛만 인카운터마다 들락날락).
+	// 적 지휘관이 없으면 적의 명령이 전부 Rejected 되므로 여기서 같이 등록.
 	Sim.AddCommander(1, CommanderType::Command);
+	Sim.AddCommander(ENEMY_COMMANDER_ID, CommanderType::Command);
 
-	// 메타 인벤토리 초기 지급 (P0 테스트용 — 나중에 로스터/상점으로 대체)
-	Meta.id = 1;
-	Meta.Add((uint32)ItemType::HealPotion, 5);
-
-	Class team[] = { Class::Warrior, Class::Mage, Class::Archer };
-	for (int32 i = 0; i < 3; ++i)
-	{
-		Sim.AddUnit(100 + i, 1, Faction::Player, team[i], Vec3{ 0.f, (float)(i - 1) * 100.f, 0.f },
-			std::make_unique<GuardBrain>());   // 명령 없을 때 근처 적에게 자동 반격
-	};
-	
-	Sim.AddCommander(2, CommanderType::Command);   // 적 진영 지휘관 (owner=2) — 없으면 명령이 전부 Rejected
-	// ── 적(Hostile) 스폰: 반대편에 3기
-	Class enemyTeam[] = { Class::Warrior, Class::Tanker, Class::Archer };
-	for (int32 i = 0; i < 3; ++i)
-	{
-		Sim.AddUnit(200 + i, 2, Faction::Hostile, enemyTeam[i],
-			Vec3{ 600.f, (float)(i - 1) * 100.f, 0.f },std::make_unique<GuardBrain>());
-	}
-	
-	// Sim 유닛마다 화면 액터 하나씩 스폰
-	if (UnitClass)
-	{
-		FActorSpawnParameters Params;
-		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;  // 겹쳐도 무조건 스폰
-		for (const auto& Pair : Sim.Units())
-		{
-			AFMUnit* A = GetWorld()->SpawnActor<AFMUnit>(UnitClass, FVector::ZeroVector, FRotator::ZeroRotator, Params);
-			if (A) UnitActors.Add(Pair.first, A);
-		}
-		UE_LOG(LogTemp, Warning, TEXT("[FM] 유닛 액터 스폰: %d개 (UnitClass OK)"), UnitActors.Num());
-	}
-	else
-	{
+	if (!UnitClass)
 		UE_LOG(LogTemp, Error, TEXT("[FM] UnitClass가 None! FMSimManager 디테일에서 Unit Class를 BP_Unit으로 지정하세요."));
+
+	if (bSpawnExplorationAvatar)
+	{
+		// 매니저 액터가 놓인 자리에서 출발. 전투 유닛과 달리 CombatUnitIds에 넣지 않는다.
+		const FVector Home = GetActorLocation();
+		AvatarUnitId = SpawnSimUnit(EFMClass::Warrior, 1, Faction::Player, FVector2D(Home.X, Home.Y));
+		UE_LOG(LogTemp, Warning, TEXT("[FM] 탐험 아바타 스폰 id=%llu"), AvatarUnitId);
 	}
-	
-	// 매니저가 실제로 도는지 + 유닛 몇 개 스폰됐는지
+
+	if (bAutoStartDebugEncounter)
+	{
+		// 예전 배치를 그대로 재현: 아군 x=0, 적 x=600 → 중점 x=300
+		StartEncounter(DebugEncounter, FVector(300.f, 0.f, GroundZ), FVector::ForwardVector);
+	}
+
 	UE_LOG(LogTemp, Warning, TEXT("[FM] SimManager BeginPlay, units=%d"), (int32)Sim.Units().size());
 }
 
@@ -114,11 +132,171 @@ void AFMSimManager::DrainSimEvents()
 	PendingEvents.Reset();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  인카운터 — 탐험(아바타만) ↔ 전투(용병+적 스폰)
+// ─────────────────────────────────────────────────────────────────────────────
+
+uint64 AFMSimManager::SpawnSimUnit(EFMClass Cls, uint64 OwnerId, Faction Fac, const FVector2D& PlanarPos)
+{
+	const uint64 Id = NextUnitId++;
+
+	Sim.AddUnit(Id, OwnerId, Fac, ToSimClass(Cls),
+		Vec3{ (float)PlanarPos.X, (float)PlanarPos.Y, 0.f },   // Z는 Sim 지면(0) 고정
+		std::make_unique<GuardBrain>());                        // 명령 없을 때 근처 적에게 자동 반격
+
+	if (UnitClass)
+	{
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		if (AFMUnit* A = GetWorld()->SpawnActor<AFMUnit>(UnitClass, FVector::ZeroVector, FRotator::ZeroRotator, Params))
+			UnitActors.Add(Id, A);
+	}
+	return Id;
+}
+
+bool AFMSimManager::GetAvatarWorldPos(FVector& OutPos) const
+{
+	auto It = Sim.Units().find(AvatarUnitId);
+	if (It == Sim.Units().end() || !It->second.alive) return false;
+
+	const Unit& U = It->second;
+	OutPos = FVector(U.pos.x, U.pos.y, GroundZAt(U.pos.x, U.pos.y));
+	return true;
+}
+
+void AFMSimManager::SetAvatarWorldPos(const FVector& WorldPos)
+{
+	if (Unit* U = Sim.GetUnit(AvatarUnitId))
+	{
+		// Z는 Sim 지면(0) 고정 — 월드 Z를 그대로 넣으면 유닛이 공중에 뜬다
+		U->pos = Vec3{ (float)WorldPos.X, (float)WorldPos.Y, 0.f };
+		U->executing = false;          // 이동 중이었다면 취소 — 순간이동 후 원래 목적지로 되돌아가면 안 된다
+		U->reserveQueue.clear();
+	}
+}
+
+void AFMSimManager::ReturnToWorldMap()
+{
+	UFMGameInstance* GI = GetWorld() ? GetWorld()->GetGameInstance<UFMGameInstance>() : nullptr;
+	if (!GI || GI->ReturnWorldMap.IsNone())
+	{
+		// 월드맵을 거치지 않고 컴뱃맵에서 바로 플레이한 경우 — 돌아갈 곳이 없다
+		UE_LOG(LogTemp, Warning, TEXT("[FM] 복귀할 월드맵이 없습니다 — 컴뱃맵에 그대로 남습니다"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[FM] 월드맵 복귀 → %s (노드 %s)"),
+		*GI->ReturnWorldMap.ToString(), *GI->LastWorldNodeId.ToString());
+
+	UGameplayStatics::OpenLevel(this, GI->ReturnWorldMap);
+}
+
+void AFMSimManager::StartEncounter(const FFMEncounterDef& Def, const FVector& Center, const FVector& FacingDir)
+{
+	if (bInCombat)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[FM] 이미 전투 중 — 인카운터 '%s' 무시"), *Def.EncounterId.ToString());
+		return;
+	}
+
+	// 아군이 바라볼 방향. 0벡터가 들어오면(심볼과 아바타가 겹친 경우) +X로 뭉갠다.
+	FVector Fwd = FacingDir.GetSafeNormal2D();
+	if (Fwd.IsNearlyZero()) Fwd = FVector::ForwardVector;
+	const FVector Right = FVector::CrossProduct(FVector::UpVector, Fwd);   // UE 기준 오른쪽(+Y)
+
+	const float   Half      = Def.Separation * 0.5f;
+	const FVector AllyBase  = Center - Fwd * Half;   // 조우 지점에서 절반씩 물러선다
+	const FVector EnemyBase = Center + Fwd * Half;
+
+	// Offset.X = 상대 진영 쪽으로 나아간 거리, Offset.Y = 좌우(양 진영 공통 축, 미러링 없음)
+	auto Place = [&Right](const FVector& Base, const FVector& Toward, const FFMUnitSpawn& S)
+	{
+		const FVector P = Base + Toward * S.Offset.X + Right * S.Offset.Y;
+		return FVector2D(P.X, P.Y);
+	};
+
+	for (const FFMUnitSpawn& S : Def.Allies)
+		CombatUnitIds.Add(SpawnSimUnit(S.UnitClass, 1, Faction::Player, Place(AllyBase, Fwd, S)));
+
+	for (const FFMUnitSpawn& S : Def.Enemies)
+		CombatUnitIds.Add(SpawnSimUnit(S.UnitClass, ENEMY_COMMANDER_ID, Faction::Hostile, Place(EnemyBase, -Fwd, S)));
+
+	bInCombat = true;
+
+	UE_LOG(LogTemp, Warning, TEXT("[FM] 인카운터 시작 '%s' — 아군 %d기, 적 %d기 (중점 %s)"),
+		*Def.EncounterId.ToString(), Def.Allies.Num(), Def.Enemies.Num(), *Center.ToCompactString());
+}
+
+void AFMSimManager::EndEncounter()
+{
+	if (!bInCombat) return;
+
+	for (uint64 Id : CombatUnitIds)
+	{
+		Sim.RemoveUnit(Id);
+
+		if (TObjectPtr<AFMUnit>* Found = UnitActors.Find(Id))
+		{
+			if (AFMUnit* A = Found->Get()) A->Destroy();
+			UnitActors.Remove(Id);
+		}
+	}
+	CombatUnitIds.Reset();
+
+	// 사라진 유닛을 가리키는 이벤트가 다음 프레임에 소진되면 안 된다
+	PendingEvents.Reset();
+
+	SelectedUnitId = 0;
+	bTargeting     = false;
+	bMenuOpen      = false;
+	bInCombat      = false;
+
+	UE_LOG(LogTemp, Warning, TEXT("[FM] 인카운터 종료 — 탐험 상태로 복귀"));
+}
+
+void AFMSimManager::CheckCombatResolution()
+{
+	if (!bInCombat) return;
+
+	bool bAnyAlly = false, bAnyEnemy = false;
+	for (uint64 Id : CombatUnitIds)
+	{
+		const Unit* U = Sim.GetUnit(Id);
+		if (!U || !U->alive) continue;
+		if (U->faction == Faction::Hostile) bAnyEnemy = true;
+		else                                bAnyAlly  = true;
+	}
+
+	// 아바타는 CombatUnitIds 밖이지만 엄연히 아군 — 빼먹으면 용병 없이 붙었을 때
+	// 시작하자마자 패배로 판정된다.
+	if (const Unit* Av = Sim.GetUnit(AvatarUnitId))
+		if (Av->alive) bAnyAlly = true;
+
+	if (bAnyAlly && bAnyEnemy) return;   // 아직 진행 중
+
+	const bool bVictory = !bAnyEnemy;
+	UE_LOG(LogTemp, Warning, TEXT("[FM] 전투 종료 — %s"), bVictory ? TEXT("승리") : TEXT("패배"));
+
+	EndEncounter();
+	OnCombatEnded.Broadcast(bVictory);   // 정리 후에 알린다 — 구독자가 바로 다음 인카운터를 걸 수 있게
+
+	if (bReturnToWorldMapAfterCombat)
+	{
+		// 즉시 OpenLevel 하면 승패 연출을 볼 틈이 없고, 같은 프레임에 레벨이 날아가
+		// 구독자들이 정리 중에 파괴된다. 한 박자 뒤로 미룬다.
+		if (ReturnDelay > 0.f)
+			GetWorldTimerManager().SetTimer(ReturnTimer, this, &AFMSimManager::ReturnToWorldMap, ReturnDelay, false);
+		else
+			ReturnToWorldMap();
+	}
+}
+
 void AFMSimManager::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	Sim.Tick(DeltaSeconds);			// Sim 한 스텝 진행
 	DrainSimEvents();
+	CheckCombatResolution();   // 이벤트 소진 뒤에 — 액터를 파괴하기 전에 알림이 먼저 나가야 한다
 	// 디버그용 : 모든 유닛 위치 표시
 	for (const auto& Pair : Sim.Units())
 	{
@@ -346,7 +524,8 @@ bool AFMSimManager::UseConsumable(int32 ItemId)
 	const Unit* U = Sim.GetUnit(SelectedUnitId);
 	if (!U || !U->alive) return false;
 
-	if (!Meta.Consume((uint32)ItemId))   // 재고 없음
+	MetaPlayer* M = MetaPtr();
+	if (!M || !M->Consume((uint32)ItemId))   // 재고 없음
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[FM] 아이템 부족 (id=%d)"), ItemId);
 		return false;
@@ -373,7 +552,10 @@ bool AFMSimManager::EquipItem(int32 ItemId)
 TArray<FFMItemInfo> AFMSimManager::GetInventory() const
 {
 	TArray<FFMItemInfo> Out;
-	for (const ItemStack& S : Meta.inventory)
+	const MetaPlayer* M = MetaPtr();
+	if (!M) return Out;
+
+	for (const ItemStack& S : M->inventory)
 	{
 		if (S.count <= 0) continue;
 

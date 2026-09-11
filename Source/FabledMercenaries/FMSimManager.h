@@ -2,6 +2,7 @@
 #include "GameFramework/Actor.h"
 #include "Sim/CombatSim.h"
 #include "Meta/Player.h"
+#include "FMEncounter.h"
 #include "FMSimManager.generated.h"
 
 enum class ESimEvt : uint8 {AttackFired, Damaged, Death, SkillCast, CmdComplete};
@@ -49,6 +50,7 @@ struct FFMItemInfo
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FFMMenuCancel);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FFMCombatEnded, bool, bVictory);
 UCLASS()
 class FABLEDMERCENARIES_API AFMSimManager : public AActor
 {
@@ -153,14 +155,72 @@ public:
 	TArray<FSimEvent> PendingEvents;
 	void BindSimCallbacks();
 	void DrainSimEvents();
-	
+
+	// ─────────────────────────────────────────────────────────────
+	//  인카운터 — 탐험(아바타만) ↔ 전투(용병+적 스폰) 전환
+	// ─────────────────────────────────────────────────────────────
+
+	/**
+	 * 심볼 접촉 → 전투 시작. Center를 가운데 두고 양 진영을 Separation만큼 벌려 세운다.
+	 * FacingDir은 아군이 바라볼 방향(대개 아바타 → 심볼 방향). 이미 전투 중이면 무시.
+	 */
+	void StartEncounter(const FFMEncounterDef& Def, const FVector& Center, const FVector& FacingDir);
+
+	/** 전투 종료 — 이번 인카운터로 스폰된 유닛과 액터를 전부 걷어내고 탐험 상태로 되돌린다 */
+	void EndEncounter();
+
+	UFUNCTION(BlueprintPure, Category = "Encounter")
+	bool IsInCombat() const { return bInCombat; }
+
+	/** 전투 종료 통지 — true=승리(적 전멸), false=패배(아군 전멸). UI/월드맵이 구독 */
+	UPROPERTY(BlueprintAssignable, Category = "Encounter")
+	FFMCombatEnded OnCombatEnded;
+
+	/** 에디터에서 지정하는 디버그 인카운터 — BeginPlay에서 바로 시작할 때 쓴다 */
+	UPROPERTY(EditAnywhere, Category = "Encounter")
+	FFMEncounterDef DebugEncounter;
+
+	/** 켜두면 BeginPlay에서 DebugEncounter를 즉시 시작 (심볼 없이 전투만 보고 싶을 때) */
+	UPROPERTY(EditAnywhere, Category = "Encounter")
+	bool bAutoStartDebugEncounter = true;
+
+	/**
+	 * 탐험 아바타(지휘관)를 BeginPlay에서 스폰할지.
+	 * 서버 설계상 탐험맵에 상시 존재하는 건 이 아바타 1기뿐이고,
+	 * 용병·적은 인카운터 동안에만 Sim에 들어왔다 나간다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Encounter")
+	bool bSpawnExplorationAvatar = true;
+
+	/** 아바타의 Sim 유닛 id. 0 = 아직 없음 */
+	uint64 GetAvatarUnitId() const { return AvatarUnitId; }
+
+	/** 탐험 아바타의 월드 위치. 살아있을 때만 true — 심볼이 거리 판정에 쓴다 */
+	UFUNCTION(BlueprintPure, Category = "Encounter")
+	bool GetAvatarWorldPos(FVector& OutPos) const;
+
+	/** 아바타를 특정 지점으로 옮긴다 (월드맵 복귀 시 노드 앞에 세우는 용도) */
+	void SetAvatarWorldPos(const FVector& WorldPos);
+
+	/** 전투가 끝나면 월드맵으로 자동 복귀할지. 끄면 컴뱃맵에 남아 탐험을 계속한다 */
+	UPROPERTY(EditAnywhere, Category = "Encounter")
+	bool bReturnToWorldMapAfterCombat = true;
+
+	/** 복귀까지 대기 시간(초) — 0이면 즉시. 승패 결과를 볼 틈을 준다 */
+	UPROPERTY(EditAnywhere, Category = "Encounter")
+	float ReturnDelay = 1.5f;
+
 protected:
 	virtual void BeginPlay() override;
 private:
 	/** (X,Y) 지점의 실제 지형 높이를 트레이스로 구함 */
 	float GroundZAt(float X, float Y) const;
 	CombatSim Sim;
-	MetaPlayer Meta;					// 인벤토리 등 전투 밖 데이터 (Sim 순수성 유지)
+	/**
+	 * 전투 밖 데이터(인벤토리 등)는 UFMGameInstance가 소유한다 — 레벨을 넘어가도 살아남게.
+	 * GameInstance 클래스가 지정돼 있지 않으면 null을 돌려주므로 호출부에서 반드시 검사할 것.
+	 */
+	struct MetaPlayer* MetaPtr() const;
 	uint64 SelectedUnitId = 0;			// 0 = 선택된 유닛 없음
 
 	// UE 바닥 높이(클릭 트레이스 Z≈210). Sim 지면(z=0)을 이 높이에 얹어서 그림
@@ -171,5 +231,25 @@ private:
 	bool bTargeting = false;	// 대상, 목적지 클릭 대기 중 (컨트롤러가 설정)
 	
 	TMap<uint64, TObjectPtr<class AFMUnit>> UnitActors;   // Sim id → 화면 액터
+
+	bool   bInCombat = false;        // 전투 중인가 (false = 탐험)
+	uint64 NextUnitId = 100;         // 유닛 id 발급기 (아바타는 1번대를 쓴다)
+	TArray<uint64> CombatUnitIds;    // 이번 인카운터로 스폰된 유닛 — 종료 시 이 목록만 지운다
+
+	/** Sim에 유닛 1기 + 화면 액터 1개를 만든다. 반환값은 발급된 id */
+	uint64 SpawnSimUnit(EFMClass Cls, uint64 OwnerId, Faction Fac, const FVector2D& PlanarPos);
+
+	/** 전투 중 승패가 갈렸는지 검사 — 갈렸으면 EndEncounter까지 수행 */
+	void CheckCombatResolution();
+
+	/** ReturnDelay 뒤에 호출 — GameInstance에 적어둔 월드맵으로 되돌아간다 */
+	UFUNCTION()
+	void ReturnToWorldMap();
+
+	FTimerHandle ReturnTimer;
+
+	uint64 AvatarUnitId = 0;         // 탐험 아바타 — CombatUnitIds에 넣지 않아 전투 종료에도 살아남는다
+
+	static constexpr uint64 ENEMY_COMMANDER_ID = 2;
 
 };

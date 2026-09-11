@@ -21,6 +21,11 @@ public:	// 등록 — brain 기본 null(=사람 조종). AI면 구체 Brain을 m
 	Commander& AddCommander(uint64_t playerId, CommanderType type = CommanderType::Command); // Commander id는 외부에서 발급, Sim은 단순 등록만.
 	Unit* GetUnit(uint64_t id);		// Unit id로 검색, 없으면 null
 
+	// 유닛 제거 — 전투 종료 시 용병/적을 필드에서 내린다(탐험맵엔 지휘관 아바타만 남음).
+	// 지휘관 usedCost를 되돌리고, 이 유닛과 얽힌 발사체를 무효화한다.
+	// 주의: Tick() 안에서 호출하지 말 것(_units 순회 중 제거 = 이터레이터 무효화).
+	bool RemoveUnit(uint64_t id);
+
 	//명령
 	CommandResult IssueCommand(uint64_t unitId, Command cmd, bool reserve);	// Unit id로 명령 발급. Unit이 없으면 Rejected. Unit이 수행 중이면 Queued. 성공 시 Accepted.
 	CommandResult CancelCommand(uint64_t unitId, uint32_t slotId);	// Unit id로 명령 취소. Unit이 없으면 Rejected. slotId가 없으면 Rejected. 성공 시 Cancelled.

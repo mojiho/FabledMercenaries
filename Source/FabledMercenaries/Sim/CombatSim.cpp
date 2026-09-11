@@ -39,6 +39,29 @@ Unit& CombatSim::AddUnit(uint64_t id, uint64_t ownerId, Faction faction, Class c
 // <summary>
 // 등록: Commander. playerId는 외부에서 발급, Sim은 단순 등록만.
 // </summary>
+bool CombatSim::RemoveUnit(uint64_t id)
+{
+	auto it = _units.find(id);
+	if (it == _units.end()) return false;
+
+	// 지휘관 코스트 환원 (0 밑으로 내려가지 않게)
+	if (auto cit = _commanders.find(it->second.ownerId); cit != _commanders.end())
+	{
+		cit->second.usedCost -= it->second.cost;
+		if (cit->second.usedCost < 0.f) cit->second.usedCost = 0.f;
+	}
+
+	_units.erase(it);
+
+	// 이 유닛이 쏜/이 유닛을 노리던 발사체는 무효화 — 사라진 id를 계속 추적하면 안 된다
+	for (Projectile& p : _projectiles)
+		if (p.ownerId == id || p.targetId == id)
+			p.alive = false;
+
+	// 이 유닛을 대상으로 하던 남의 명령은 GetUnit()이 null을 돌려줘 자동으로 완료 처리된다.
+	return true;
+}
+
 Commander& CombatSim::AddCommander(uint64_t playerId, CommanderType type)
 {
 	Commander c = MakeCommander(playerId, type);

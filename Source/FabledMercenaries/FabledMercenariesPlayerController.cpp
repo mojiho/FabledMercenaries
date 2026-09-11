@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "DrawDebugHelpers.h" 
-#include "FabledMercenariesPlayerController.h"
+#include "FabledMercenariesPlayerController.h"   // UE IWYU 규칙: 자기 헤더가 반드시 첫 줄
+#include "DrawDebugHelpers.h"
 #include "GameFramework/Pawn.h"
 #include "Blueprint/AIBlueprintHelperLibrary.h"
 #include "NiagaraSystem.h"
