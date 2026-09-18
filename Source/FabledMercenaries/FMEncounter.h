@@ -32,6 +32,9 @@ static_assert((uint8)EFMClass::Healer   == (uint8)Class::Healer,   "EFMClass가 
 /** EFMClass → Sim Class */
 FORCEINLINE Class ToSimClass(EFMClass C) { return (Class)(uint8)C; }
 
+/** Sim Class → EFMClass (용병 로스터에서 스폰할 때) */
+FORCEINLINE EFMClass FromSimClass(Class C) { return (EFMClass)(uint8)C; }
+
 /** 유닛 1기의 편성 정보 */
 USTRUCT(BlueprintType)
 struct FFMUnitSpawn
@@ -67,8 +70,8 @@ struct FFMEncounterDef : public FTableRowBase
 	TArray<FFMUnitSpawn> Enemies;
 
 	/**
-	 * 아군 편성. 지금은 여기 직접 적지만, 메타 로스터가 생기면
-	 * 비워두고 MetaPlayer의 용병 목록에서 채우게 된다.
+	 * 아군 편성 — 대체용. 실제 전투는 GameInstance의 용병 로스터로 치른다.
+	 * 로스터가 비어 있을 때(GameInstance 미지정 등)에만 이 목록을 쓴다.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter")
 	TArray<FFMUnitSpawn> Allies;

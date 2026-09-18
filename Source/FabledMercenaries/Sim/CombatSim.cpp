@@ -198,7 +198,7 @@ void CombatSim::Tick(float dt)
 	// 2) 의사결정 — brain 있는 유닛만(AI). 사람 조종은 brain==null → 건너뜀.
 	_aiIssuing = true;                     // 이 구간의 IssueCommand는 AI 명령 → 게이지 무소모
 	for (auto& [id, u] : _units)
-		if (u.brain)
+		if (u.brain && u.alive)            // 사망자는 판단하지 않는다 (죽은 채 스폰된 용병 포함)
 			u.brain->Decide(*this, u, dt);
 	_aiIssuing = false;
 

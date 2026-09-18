@@ -71,7 +71,15 @@ void AFMSimManager::BeginPlay()
 
 	// 지휘관은 레벨 수명 내내 유지된다 (유닛만 인카운터마다 들락날락).
 	// 적 지휘관이 없으면 적의 명령이 전부 Rejected 되므로 여기서 같이 등록.
-	Sim.AddCommander(1, CommanderType::Command);
+	Commander& PlayerCmd = Sim.AddCommander(1, CommanderType::Command);
+	if (bIsWorldMap)
+	{
+		// 월드맵 탐험 이동은 전투 명령이 아니다 — 지휘관 게이지를 쓰지 않게 사실상 무한으로.
+		// (안 그러면 드래그로 목적지를 계속 갱신할 때 게이지가 금방 바닥나 명령이 조용히 거부된다)
+		PlayerCmd.cmdMax   = 100000.f;
+		PlayerCmd.cmdGauge = 100000.f;
+		PlayerCmd.cmdRate  = 100000.f;
+	}
 	Sim.AddCommander(ENEMY_COMMANDER_ID, CommanderType::Command);
 
 	if (!UnitClass)
@@ -215,21 +223,76 @@ void AFMSimManager::StartEncounter(const FFMEncounterDef& Def, const FVector& Ce
 		return FVector2D(P.X, P.Y);
 	};
 
-	for (const FFMUnitSpawn& S : Def.Allies)
-		CombatUnitIds.Add(SpawnSimUnit(S.UnitClass, 1, Faction::Player, Place(AllyBase, Fwd, S)));
+	// 아군 — 용병 로스터가 우선. Def.Allies는 로스터가 없을 때(GameInstance 미지정 등)만 쓴다.
+	int32 AllyCount = 0, AliveAllyCount = 0;
+	MetaPlayer* MP = MetaPtr();
+	if (MP && !MP->roster.empty())
+	{
+		const int32 N = (int32)MP->roster.size();
+		for (int32 i = 0; i < N; ++i)
+		{
+			const Mercenary& M = MP->roster[i];
+
+			// 로스터엔 진형 정보가 없으므로 가운데 정렬로 한 줄로 세운다
+			FFMUnitSpawn S;
+			S.UnitClass = FromSimClass(M.unitClass);
+			S.Offset    = FVector2D(0.f, (i - (N - 1) * 0.5f) * 100.f);
+
+			const uint64 Id = SpawnSimUnit(S.UnitClass, 1, Faction::Player, Place(AllyBase, Fwd, S));
+			CombatUnitIds.Add(Id);
+			UnitToMercId.Add(Id, M.id);
+
+			// 지난 전투 결과를 그대로 복원 — 죽었으면 죽은 채로 선다(시체로 스폰)
+			if (Unit* U = Sim.GetUnit(Id))
+			{
+				U->alive = M.alive;
+				U->hp    = M.alive ? FMath::Min(M.hp, U->maxHp) : 0.f;
+			}
+
+			++AllyCount;
+			if (M.alive) ++AliveAllyCount;
+		}
+
+		if (AliveAllyCount == 0)
+			UE_LOG(LogTemp, Warning, TEXT("[FM] 살아있는 용병이 없습니다 — 월드맵 휴식 지점에서 회복하세요 (아바타 혼자 싸웁니다)"));
+	}
+	else
+	{
+		for (const FFMUnitSpawn& S : Def.Allies)
+			CombatUnitIds.Add(SpawnSimUnit(S.UnitClass, 1, Faction::Player, Place(AllyBase, Fwd, S)));
+		AllyCount = AliveAllyCount = Def.Allies.Num();
+	}
 
 	for (const FFMUnitSpawn& S : Def.Enemies)
 		CombatUnitIds.Add(SpawnSimUnit(S.UnitClass, ENEMY_COMMANDER_ID, Faction::Hostile, Place(EnemyBase, -Fwd, S)));
 
 	bInCombat = true;
 
-	UE_LOG(LogTemp, Warning, TEXT("[FM] 인카운터 시작 '%s' — 아군 %d기, 적 %d기 (중점 %s)"),
-		*Def.EncounterId.ToString(), Def.Allies.Num(), Def.Enemies.Num(), *Center.ToCompactString());
+	UE_LOG(LogTemp, Warning, TEXT("[FM] 인카운터 시작 '%s' — 아군 %d기(생존 %d), 적 %d기 (중점 %s)"),
+		*Def.EncounterId.ToString(), AllyCount, AliveAllyCount, Def.Enemies.Num(), *Center.ToCompactString());
 }
 
 void AFMSimManager::EndEncounter()
 {
 	if (!bInCombat) return;
+
+	// 전투 결과를 로스터에 기록 — 유닛을 Sim에서 지우기 전에 해야 한다
+	if (MetaPlayer* MP = MetaPtr())
+	{
+		for (const TPair<uint64, uint32>& Pair : UnitToMercId)
+		{
+			Mercenary*  M = MP->FindMerc(Pair.Value);
+			const Unit* U = Sim.GetUnit(Pair.Key);
+			if (!M || !U) continue;
+
+			M->alive = U->alive;
+			M->hp    = U->alive ? FMath::Clamp(U->hp, 0.f, M->maxHp) : 0.f;
+		}
+
+		if (UFMGameInstance* GI = GetWorld()->GetGameInstance<UFMGameInstance>())
+			GI->LogRoster(TEXT("전투 결과 기록"));
+	}
+	UnitToMercId.Reset();
 
 	for (uint64 Id : CombatUnitIds)
 	{

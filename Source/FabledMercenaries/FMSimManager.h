@@ -206,6 +206,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Encounter")
 	bool bReturnToWorldMapAfterCombat = true;
 
+	/** 이 레벨이 월드맵인가 — 월드맵에서만 휴식(용병 부활·회복)이 허용된다 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Encounter")
+	bool bIsWorldMap = false;
+
 	/** 복귀까지 대기 시간(초) — 0이면 즉시. 승패 결과를 볼 틈을 준다 */
 	UPROPERTY(EditAnywhere, Category = "Encounter")
 	float ReturnDelay = 1.5f;
@@ -235,6 +239,7 @@ private:
 	bool   bInCombat = false;        // 전투 중인가 (false = 탐험)
 	uint64 NextUnitId = 100;         // 유닛 id 발급기 (아바타는 1번대를 쓴다)
 	TArray<uint64> CombatUnitIds;    // 이번 인카운터로 스폰된 유닛 — 종료 시 이 목록만 지운다
+	TMap<uint64, uint32> UnitToMercId;   // 로스터에서 스폰된 유닛 id → 용병 id (전투 결과를 되돌려 적는 용도)
 
 	/** Sim에 유닛 1기 + 화면 액터 1개를 만든다. 반환값은 발급된 id */
 	uint64 SpawnSimUnit(EFMClass Cls, uint64 OwnerId, Faction Fac, const FVector2D& PlanarPos);

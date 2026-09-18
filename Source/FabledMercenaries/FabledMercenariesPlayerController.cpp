@@ -175,7 +175,15 @@ void AFabledMercenariesPlayerController::OnClickCommand()
 		return;
 	}
 
-	// ── 평소: 유닛 선택 ──
+	if (Mgr->bIsWorldMap)
+	{
+		Mgr->IssueMoveCommand(Mgr->GetAvatarUnitId(), Hit.Location);
+		bWorldDragMove     = true;          // 누르고 있는 동안 PlayerTick이 목적지를 계속 갱신
+		WorldDragTimer     = 0.f;
+		WorldDragLastPoint = Hit.Location;
+		return;
+	}
+	
 	Mgr->HandleClick(Hit.Location);
 }
 

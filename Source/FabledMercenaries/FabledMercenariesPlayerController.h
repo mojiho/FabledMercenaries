@@ -171,6 +171,11 @@ protected:
 	int32 PendingSkillType = 0;                 // 시전 대기 중인 스킬(Sim SkillType 값)
 	int32 PendingTargetMode = 0;                // 0=즉시 1=유닛 2=지점
 	int32 PendingTargetFilter = 0;              // 0=Any 1=Ally 2=Enemy
+	
+	// ── 월드맵 드래그 이동 ──
+	bool    bWorldDragMove     = false;                 // 월드맵에서 땅을 누른 채 끌고 있는 중
+	float   WorldDragTimer     = 0.f;                   // 마지막 목적지 갱신 이후 경과 시간
+	FVector WorldDragLastPoint = FVector::ZeroVector;   // 마지막으로 보낸 목적지
 };
 
 
