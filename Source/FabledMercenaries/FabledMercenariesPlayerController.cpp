@@ -217,6 +217,8 @@ void AFabledMercenariesPlayerController::ChooseSkill(int32 SkillType)
 
 void AFabledMercenariesPlayerController::OnLeftReleased()
 {
+	bWorldDragMove = false;			// 월드맵 드레그 종료
+	
 	if (!bMoveMode || !bAiming) return;
 	bAiming = false;
 
@@ -400,6 +402,31 @@ void AFabledMercenariesPlayerController::PlayerTick(float DeltaTime)
 {
     Super::PlayerTick(DeltaTime);
 
+	// 월드맵 드레그 모드 : 누르고 있는동안 커서 지점으로 목적지를 갱신한다.
+	if (bWorldDragMove)
+	{
+		// 게임 창 밖에서 버튼을 떼면 Released 이벤트를 놓칠 수 있어 직접 확인
+		if (!IsInputKeyDown(EKeys::LeftMouseButton))
+		{
+			bWorldDragMove = false;
+		}
+		else
+		{
+			WorldDragTimer += DeltaTime;
+			
+			FHitResult DragHit;
+			// 너무 자주 보내지 않게 , 커서가 땅 위에 있을 때 만 , 커서가 일정 이상 움직였을 때 만
+			if (WorldDragTimer >= 0.1f && GetHitResultUnderCursor(ECC_Visibility, false, DragHit) && FVector::Dist2D(DragHit.Location, WorldDragLastPoint) > 30.f)
+			{
+				if (AFMSimManager* DragMgr = Cast<AFMSimManager>(UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
+				{
+					DragMgr->IssueMoveCommand(DragMgr->GetAvatarUnitId(), DragHit.Location);
+					WorldDragLastPoint  = DragHit.Location;
+					WorldDragTimer = 0.f;
+				}
+			}
+		}
+	}
     // 링이 떠있는 동안(유닛 선택 중)엔 카메라를 그 유닛에 고정(따라감)
     if (AFMSimManager* SelMgr = Cast<AFMSimManager>(
         UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
