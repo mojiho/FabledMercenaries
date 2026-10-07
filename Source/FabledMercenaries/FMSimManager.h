@@ -198,6 +198,14 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Encounter")
 	float AvatarMoveSpeed = 600.f;
 
+	/**
+	 * 아바타가 걸어서 오를 수 있는 턱 높이(cm). 발 높이보다 이만큼 넘게 높은 곳으로는 못 들어간다 → 점프해야 오른다.
+	 * (경사면은 기울기만큼 추가 허용 — BP_Unit의 WalkableSlopeDeg)
+	 * 월드맵·탐험(전투 밖)에서만 적용. 전투 유닛은 점프를 못 하므로 막지 않는다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Encounter")
+	float MaxStepUpHeight = 40.f;
+
 	/** 아바타 점프 (화면 연출만 — Sim 위치는 지면 그대로). 공중이거나 아바타가 없으면 false */
 	UFUNCTION(BlueprintCallable, Category = "Encounter")
 	bool JumpAvatar();
@@ -219,6 +227,9 @@ protected:
 private:
 	/** (X,Y) 지점의 실제 지형 높이를 트레이스로 구함 */
 	float GroundZAt(float X, float Y) const;
+
+	/** 이번 틱에 아바타가 너무 높은 턱으로 들어갔으면 되돌린다 (축별로 다시 시도해 턱을 따라 미끄러지게) */
+	void BlockAvatarAtLedges(float PrevX, float PrevY);
 	CombatSim Sim;
 	/**
 	 * 전투 밖 데이터(인벤토리 등)는 UFMGameInstance가 소유한다 — 레벨을 넘어가도 살아남게.

@@ -56,20 +56,38 @@ public:
 	
 	UPROPERTY(BlueprintReadOnly, Category="Unit") bool bDead = false;
 
-	// ── 점프 — Sim엔 높이 개념이 없으므로 화면에서만 띄우는 연출 (위치 판정은 그대로 지면) ──
+	// ── 수직 이동 (점프·낙하) ──
+	// Sim은 높이를 모르고 매 프레임 지면 위치만 준다. 화면 높이(발 높이)는 여기서 중력으로 따로 굴린다.
+	// 점프 = 위로 초속을 주고 공중 상태로, 턱에서 걸어 나감 = 초속 0으로 공중 상태로 — 둘 다 같은 낙하 처리.
+	// 발 높이(GetFootZ)는 SimManager가 '턱을 오를 수 있나' 판정에 쓴다 → 높은 턱은 점프해야 오른다.
+
 	/** 점프 동작 — AnimBP의 DefaultSlot으로 재생. 비우면 몸만 떠오른다 */
 	UPROPERTY(EditAnywhere, Category="Anim") TObjectPtr<UAnimSequenceBase> JumpAnim;
 
-	/** 최고점 높이(cm) */
+	/** 점프 최고 높이(cm) — 이 높이 + 턱 오르기 허용치(SimManager MaxStepUpHeight)까지의 턱을 넘을 수 있다 */
 	UPROPERTY(EditAnywhere, Category="Jump") float JumpHeight = 120.f;
 
-	/** 이륙부터 착지까지(초) — 점프 애님도 이 시간에 맞춰 빨리/느리게 재생된다 */
-	UPROPERTY(EditAnywhere, Category="Jump") float JumpDuration = 0.75f;
+	/** 중력(cm/s²) — 점프·낙하 공통. 탑뷰에서 둥둥 떠 보이지 않게 실제(980)보다 세게 */
+	UPROPERTY(EditAnywhere, Category="Jump") float Gravity = 2400.f;
 
 	/** 점프 시작. 이미 공중이거나 죽었으면 false */
 	UFUNCTION(BlueprintCallable, Category="Jump") bool StartJump();
 
-	UFUNCTION(BlueprintPure, Category="Jump") bool IsJumping() const { return JumpElapsed >= 0.f; }
+	UFUNCTION(BlueprintPure, Category="Jump") bool IsJumping() const { return bAirborne && bJumped; }
+	UFUNCTION(BlueprintPure, Category="Jump") bool IsInAir() const { return bAirborne; }
+
+	/** 이 각도까지의 경사는 바닥에 붙어 걷는다. 그보다 가파르게 꺼지면 떨어진다 */
+	UPROPERTY(EditAnywhere, Category="Jump") float WalkableSlopeDeg = 50.f;
+
+	/** 낮은 턱(오르기 허용치 이하)을 오를 때 따라붙는 속도 (FInterpTo 속도) */
+	UPROPERTY(EditAnywhere, Category="Jump") float StepUpInterpSpeed = 14.f;
+
+	/** 낙하 동작 (루프) — 걸어서 떨어질 때, 이만큼 떨어진 뒤에야 재생 (작은 턱에서 깜빡이지 않게) */
+	UPROPERTY(EditAnywhere, Category="Anim") TObjectPtr<UAnimSequenceBase> FallAnim;
+	UPROPERTY(EditAnywhere, Category="Jump") float FallAnimDelay = 0.12f;
+
+	/** 지금 화면상 발 높이. 아직 한 번도 갱신 안 됐으면 false */
+	bool GetFootZ(float& OutZ) const { OutZ = VisualZ; return bHasVisualZ; }
 
 	void NotifyAttackFired();
 	void NotifyDamaged(bool bFromBehind, bool bCrit);
@@ -89,5 +107,14 @@ private:
 	FVector PrevLoc = FVector::ZeroVector;   // 속도 계산용 이전 위치
 	bool bHasPrev = false;
 
-	float JumpElapsed = -1.f;                // 점프 경과 시간. 음수 = 땅에 있음
+	// 수직 상태
+	void  UpdateVertical(float GroundZ, float HorizMove, float DeltaSeconds);
+	void  Land();
+	float VisualZ = 0.f;                     // 발 높이 (화면)
+	bool  bHasVisualZ = false;
+	bool  bAirborne = false;                 // 점프 중이거나 떨어지는 중
+	bool  bJumped = false;                   // 공중에 뜬 이유가 점프인가 (낙하 모션 대신 점프 모션 유지)
+	float VertVel = 0.f;                     // 수직 속도(cm/s, 위가 +)
+	float AirTime = 0.f;
+	TWeakObjectPtr<UAnimMontage> FallMontage; // 재생 중인 낙하 루프 — 착지 때 멈춘다
 };

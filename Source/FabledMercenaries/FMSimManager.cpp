@@ -184,6 +184,50 @@ void AFMSimManager::SetAvatarWorldPos(const FVector& WorldPos)
 	}
 }
 
+void AFMSimManager::BlockAvatarAtLedges(float PrevX, float PrevY)
+{
+	if (bInCombat && !bIsWorldMap) return;            // 전투 중엔 막지 않는다 (점프 불가)
+
+	Unit* Av = Sim.GetUnit(AvatarUnitId);
+	TObjectPtr<AFMUnit>* Found = UnitActors.Find(AvatarUnitId);
+	AFMUnit* A = Found ? Found->Get() : nullptr;
+	float FootZ = 0.f;
+	if (!Av || !Av->alive || !A || !A->GetFootZ(FootZ)) return;
+
+	const float NewX = Av->pos.x, NewY = Av->pos.y;
+	if (NewX == PrevX && NewY == PrevY) return;
+
+	// 이동 경로를 촘촘히(10cm) 따라가며 바닥 높이를 잰다 — 한 칸에서 '오를 수 있는 높이 + 그 칸 길이만큼의 경사'를
+	// 넘게 솟으면 턱이다. 한 프레임 이동량 전체로 경사를 허용하면 프레임이 떨어질 때(창이 뒤에 있을 때 등)
+	// 한 번에 수십 cm를 가므로 절벽도 '경사'로 통과해 버린다 → 칸 단위로 끊어서 프레임 속도와 무관하게.
+	constexpr float ProbeSpacing = 10.f;
+	const float SlopeTan = FMath::Tan(FMath::DegreesToRadians(A->WalkableSlopeDeg));
+	auto CanEnter = [&](float X, float Y)
+	{
+		const float DX = X - PrevX, DY = Y - PrevY;
+		const float Dist  = FMath::Sqrt(DX * DX + DY * DY);
+		const int32 Steps = FMath::Max(1, FMath::CeilToInt(Dist / ProbeSpacing));
+		const float Allow = MaxStepUpHeight + (Dist / Steps) * SlopeTan;
+
+		float RefZ = FootZ;                                   // 공중이면 발 높이 기준 (점프로 턱을 넘는 경우)
+		for (int32 i = 1; i <= Steps; ++i)
+		{
+			const float T = (float)i / Steps;
+			const float G = GroundZAt(PrevX + DX * T, PrevY + DY * T);
+			if (G - RefZ > Allow) return false;
+			RefZ = FMath::Max(G, FootZ);                      // 경사를 오르면 기준도 따라 올라간다
+		}
+		return true;
+	};
+
+	if (CanEnter(NewX, NewY)) return;
+
+	// 막힘 — 한 축씩 다시 시도해서 턱을 따라 미끄러지게 (대각선으로 벽에 붙어 멈추지 않게)
+	if      (CanEnter(NewX, PrevY)) { Av->pos.y = PrevY; }
+	else if (CanEnter(PrevX, NewY)) { Av->pos.x = PrevX; }
+	else                            { Av->pos.x = PrevX; Av->pos.y = PrevY; }
+}
+
 bool AFMSimManager::JumpAvatar()
 {
 	const Unit* Av = Sim.GetUnit(AvatarUnitId);
@@ -373,7 +417,14 @@ void AFMSimManager::CheckCombatResolution()
 void AFMSimManager::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	// 턱 판정용 — Sim이 아바타를 옮기기 전 위치
+	const Unit* AvBefore = Sim.GetUnit(AvatarUnitId);
+	const float AvPrevX = AvBefore ? AvBefore->pos.x : 0.f;
+	const float AvPrevY = AvBefore ? AvBefore->pos.y : 0.f;
+
 	Sim.Tick(DeltaSeconds);			// Sim 한 스텝 진행
+	if (AvBefore) BlockAvatarAtLedges(AvPrevX, AvPrevY);
 	DrainSimEvents();
 	CheckCombatResolution();   // 이벤트 소진 뒤에 — 액터를 파괴하기 전에 알림이 먼저 나가야 한다
 	// 디버그용 : 모든 유닛 위치 표시
