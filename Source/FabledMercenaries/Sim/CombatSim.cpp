@@ -37,6 +37,20 @@ Unit& CombatSim::AddUnit(uint64_t id, uint64_t ownerId, Faction faction, Class c
 }
 
 // <summary>
+// 장비 적용: 보너스만큼 공격력·최대체력을 올리고, 체력도 같은 양만큼 채운다(풀피 유지).
+// 이후 호출부가 지난 전투 체력으로 hp를 덮어쓰는 건 자유.
+// </summary>
+void CombatSim::ApplyEquipment(uint64_t id, const uint32_t (&equip)[EQUIP_SLOT_COUNT])
+{
+	Unit* u = GetUnit(id);
+	if (!u) return;
+	const EquipBonus b = SumEquipBonus(equip);
+	u->attackDamage += b.atk;
+	u->maxHp        += b.hp;
+	u->hp           += b.hp;
+}
+
+// <summary>
 // 등록: Commander. playerId는 외부에서 발급, Sim은 단순 등록만.
 // </summary>
 bool CombatSim::RemoveUnit(uint64_t id)

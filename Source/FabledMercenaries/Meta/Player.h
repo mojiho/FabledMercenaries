@@ -2,7 +2,9 @@
 
 #include <cstdint>
 #include <vector>
+#include <algorithm>
 #include "Sim/Class.h"
+#include "Sim/Item.h"
 
 // <summary>
 // 메타 플레이어 데이터 — 전투 Sim 밖(로스터·재화·아이템).
@@ -23,9 +25,16 @@ struct Mercenary
 {
 	uint32_t id        = 0;              // 로스터 내 고유 번호 (1부터)
 	Class    unitClass = Class::None;
-	float    maxHp     = 0.f;            // 고용 시점의 클래스 최대 체력
-	float    hp        = 0.f;            // 지난 전투가 끝났을 때의 체력
+	float    maxHp     = 0.f;            // 고용 시점의 클래스 최대 체력 (장비 제외)
+	float    hp        = 0.f;            // 지난 전투가 끝났을 때의 체력 (장비 포함 상한 기준)
 	bool     alive     = true;
+	uint32_t equip[EQUIP_SLOT_COUNT] = {};   // 장착 itemId (인덱스 = EquipSlot - 1, 0 = 빈 칸)
+
+	/** 장비 포함 최대 체력 — 체력 상한은 항상 이걸로 잰다 */
+	float TotalMaxHp() const { return maxHp + SumEquipBonus(equip).hp; }
+
+	/** 장비 포함 공격력 */
+	float TotalAttack() const { return GetClassStats(unitClass).attackDamage + SumEquipBonus(equip).atk; }
 };
 
 struct MetaPlayer
@@ -91,7 +100,54 @@ struct MetaPlayer
 		for (auto& m : roster)
 		{
 			m.alive = true;
-			m.hp    = m.maxHp;
+			m.hp    = m.TotalMaxHp();
 		}
+	}
+
+	/**
+	 * 인벤토리의 장비를 용병에게 장착. 같은 칸에 있던 장비는 인벤토리로 돌아간다.
+	 * 체력은 '잃은 양'을 유지한다 — 갑옷을 입으면 그만큼 체력도 오르고, 벗으면 내려간다.
+	 */
+	bool Equip(uint32_t mercId, uint32_t itemId)
+	{
+		Mercenary* m = FindMerc(mercId);
+		const ItemDef d = GetItemDef(itemId);
+		if (!m || d.category != ItemCategory::Equipment || d.slot == EquipSlot::None) return false;
+		if (!Consume(itemId)) return false;                       // 재고 없음
+
+		const int idx = (int)d.slot - 1;
+		if (m->equip[idx] != 0) Add(m->equip[idx], 1);           // 기존 장비 반납
+
+		const float before = m->TotalMaxHp();
+		m->equip[idx] = itemId;
+		if (m->alive) m->hp += m->TotalMaxHp() - before;
+		return true;
+	}
+
+	/** 장비 해제 → 인벤토리로. slot은 EquipSlot 값(1~3) */
+	bool Unequip(uint32_t mercId, EquipSlot slot)
+	{
+		Mercenary* m = FindMerc(mercId);
+		if (!m || slot == EquipSlot::None) return false;
+		const int idx = (int)slot - 1;
+		if (m->equip[idx] == 0) return false;
+
+		const float before = m->TotalMaxHp();
+		Add(m->equip[idx], 1);
+		m->equip[idx] = 0;
+		if (m->alive) m->hp = std::max(1.f, m->hp - (before - m->TotalMaxHp()));   // 벗는다고 죽지는 않게
+		return true;
+	}
+
+	/** 전투 밖에서 소비 아이템 사용 (회복 포션 → 체력 회복). 사망자에겐 안 듣는다 */
+	bool UseOnMerc(uint32_t mercId, uint32_t itemId)
+	{
+		Mercenary* m = FindMerc(mercId);
+		const ItemDef d = GetItemDef(itemId);
+		if (!m || !m->alive || d.category != ItemCategory::Consumable) return false;
+		if (m->hp >= m->TotalMaxHp()) return false;               // 이미 풀피 — 낭비 방지
+		if (!Consume(itemId)) return false;
+		m->hp = std::min(m->TotalMaxHp(), m->hp + d.amount);
+		return true;
 	}
 };

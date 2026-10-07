@@ -3,6 +3,7 @@
 #include "Sim/CombatSim.h"
 #include "Meta/Player.h"
 #include "FMEncounter.h"
+#include "FMItemTypes.h"
 #include "FMSimManager.generated.h"
 
 enum class ESimEvt : uint8 {AttackFired, Damaged, Death, SkillCast, CmdComplete};
@@ -35,18 +36,6 @@ struct FSkillInfo
 	 * 버튼이 잘못 활성화되는 걸 막는다. GetSelectedUnitSkills는 항상 명시적으로 채움.
 	 */
 	UPROPERTY(BlueprintReadOnly) bool  bCanCast = false;
-};
-
-// 주의: 엔진 Slate(STreeView.h)에 이미 FItemInfo가 있어 이름 충돌 → FM 접두사 필수
-USTRUCT(BlueprintType)
-struct FFMItemInfo
-{
-	GENERATED_BODY()
-
-	UPROPERTY(BlueprintReadOnly) FString Name;
-	UPROPERTY(BlueprintReadOnly) int32   ItemId = 0;   // Sim ItemType 값
-	UPROPERTY(BlueprintReadOnly) int32   Category = 0;   // 0=소비 1=장착 (아이콘/정렬용)
-	UPROPERTY(BlueprintReadOnly) int32   Count = 0;
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FFMMenuCancel);
@@ -202,6 +191,17 @@ public:
 	/** 아바타를 특정 지점으로 옮긴다 (월드맵 복귀 시 노드 앞에 세우는 용도) */
 	void SetAvatarWorldPos(const FVector& WorldPos);
 
+	/**
+	 * 아바타 이동 속도(cm/s). BS_Idle_Walk_Run 기준 300=걷기, 600=달리기(조깅).
+	 * 전투 유닛은 직업 이속을 그대로 쓴다 — 탐험 아바타만 달린다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Encounter")
+	float AvatarMoveSpeed = 600.f;
+
+	/** 아바타 점프 (화면 연출만 — Sim 위치는 지면 그대로). 공중이거나 아바타가 없으면 false */
+	UFUNCTION(BlueprintCallable, Category = "Encounter")
+	bool JumpAvatar();
+
 	/** 전투가 끝나면 월드맵으로 자동 복귀할지. 끄면 컴뱃맵에 남아 탐험을 계속한다 */
 	UPROPERTY(EditAnywhere, Category = "Encounter")
 	bool bReturnToWorldMapAfterCombat = true;
@@ -256,5 +256,12 @@ private:
 	uint64 AvatarUnitId = 0;         // 탐험 아바타 — CombatUnitIds에 넣지 않아 전투 종료에도 살아남는다
 
 	static constexpr uint64 ENEMY_COMMANDER_ID = 2;
+
+	/**
+	 * 아바타 전용 지휘관. 아바타 이동은 탐험 조작이지 전투 지휘가 아니므로 게이지를 무한으로 둔다.
+	 * 용병과 같은 지휘관(1)에 묶으면 드래그 이동이 게이지를 바닥내 명령이 조용히 거부되고,
+	 * 아바타 코스트가 용병단 예산에 합산돼 불복종 확률까지 올라간다.
+	 */
+	static constexpr uint64 AVATAR_COMMANDER_ID = 3;
 
 };

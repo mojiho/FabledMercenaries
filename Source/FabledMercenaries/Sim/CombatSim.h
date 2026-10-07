@@ -11,6 +11,7 @@
 #include "Unit.h"
 #include "Commander.h"
 #include "Projectile.h"
+#include "Item.h"
 
 enum class CommandResult { Accepted, Rejected, Queued, Cancelled, Disobeyed };
 
@@ -25,6 +26,10 @@ public:	// 등록 — brain 기본 null(=사람 조종). AI면 구체 Brain을 m
 	// 지휘관 usedCost를 되돌리고, 이 유닛과 얽힌 발사체를 무효화한다.
 	// 주의: Tick() 안에서 호출하지 말 것(_units 순회 중 제거 = 이터레이터 무효화).
 	bool RemoveUnit(uint64_t id);
+
+	// 장비 적용 — AddUnit 직후 1회. 공격력/최대체력에 장비 보너스를 더하고 체력도 같이 올린다.
+	// (인덱스 = EquipSlot - 1, 0 = 빈 칸)
+	void ApplyEquipment(uint64_t id, const uint32_t (&equip)[EQUIP_SLOT_COUNT]);
 
 	//명령
 	CommandResult IssueCommand(uint64_t unitId, Command cmd, bool reserve);	// Unit id로 명령 발급. Unit이 없으면 Rejected. Unit이 수행 중이면 Queued. 성공 시 Accepted.

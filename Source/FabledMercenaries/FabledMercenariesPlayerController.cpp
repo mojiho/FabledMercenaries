@@ -175,7 +175,8 @@ void AFabledMercenariesPlayerController::OnClickCommand()
 		return;
 	}
 
-	if (Mgr->bIsWorldMap)
+	// 월드맵 + 탐험맵(전투 밖): 아바타를 클릭 지점으로 직접 이동. 전투 중에만 유닛 선택/지휘로 넘어간다
+	if (Mgr->bIsWorldMap || !Mgr->IsInCombat())
 	{
 		Mgr->IssueMoveCommand(Mgr->GetAvatarUnitId(), Hit.Location);
 		bWorldDragMove     = true;          // 누르고 있는 동안 PlayerTick이 목적지를 계속 갱신
@@ -377,6 +378,14 @@ void AFabledMercenariesPlayerController::OnRightClickCommand()
 		return;
 	}
 
+	// 월드맵 + 탐험맵(전투 밖): 우클릭 = 아바타 점프. 전투 중엔 아래 취소 동작 유지
+	// (누를 때가 아니라 '끌지 않고 뗐을 때' 들어온다 — 우클릭 드래그는 카메라 회전이라서)
+	if (Mgr && (Mgr->bIsWorldMap || !Mgr->IsInCombat()))
+	{
+		Mgr->JumpAvatar();
+		return;
+	}
+
 	// 평소 취소: 모드 해제 + 선택 해제
 	bMoveMode  = false;
 	bSkillMode = false;
@@ -427,12 +436,17 @@ void AFabledMercenariesPlayerController::PlayerTick(float DeltaTime)
 			}
 		}
 	}
-    // 링이 떠있는 동안(유닛 선택 중)엔 카메라를 그 유닛에 고정(따라감)
+    // 카메라 추적 — 링이 떠있는 동안(유닛 선택 중)엔 그 유닛,
+    // 월드맵·탐험맵(전투 밖)에선 아바타를 따라간다
     if (AFMSimManager* SelMgr = Cast<AFMSimManager>(
         UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
     {
         FVector SelPos;
-        if (SelMgr->HasSelectedUnit() && SelMgr->GetSelectedUnitWorldPos(SelPos))
+        const bool bFollowSelected = SelMgr->HasSelectedUnit() && SelMgr->GetSelectedUnitWorldPos(SelPos);
+        const bool bFollowAvatar   = !bFollowSelected
+            && (SelMgr->bIsWorldMap || !SelMgr->IsInCombat())
+            && SelMgr->GetAvatarWorldPos(SelPos);
+        if (bFollowSelected || bFollowAvatar)
         {
             if (AFM_CameraPawn* Cam = Cast<AFM_CameraPawn>(GetPawn()))
             {

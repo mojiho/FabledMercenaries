@@ -71,16 +71,15 @@ void AFMSimManager::BeginPlay()
 
 	// 지휘관은 레벨 수명 내내 유지된다 (유닛만 인카운터마다 들락날락).
 	// 적 지휘관이 없으면 적의 명령이 전부 Rejected 되므로 여기서 같이 등록.
-	Commander& PlayerCmd = Sim.AddCommander(1, CommanderType::Command);
-	if (bIsWorldMap)
-	{
-		// 월드맵 탐험 이동은 전투 명령이 아니다 — 지휘관 게이지를 쓰지 않게 사실상 무한으로.
-		// (안 그러면 드래그로 목적지를 계속 갱신할 때 게이지가 금방 바닥나 명령이 조용히 거부된다)
-		PlayerCmd.cmdMax   = 100000.f;
-		PlayerCmd.cmdGauge = 100000.f;
-		PlayerCmd.cmdRate  = 100000.f;
-	}
+	Sim.AddCommander(1, CommanderType::Command);
 	Sim.AddCommander(ENEMY_COMMANDER_ID, CommanderType::Command);
+
+	// 아바타 이동은 전투 명령이 아니다 — 게이지를 쓰지 않게 사실상 무한으로.
+	// (안 그러면 드래그로 목적지를 계속 갱신할 때 게이지가 금방 바닥나 명령이 조용히 거부된다)
+	Commander& AvatarCmd = Sim.AddCommander(AVATAR_COMMANDER_ID, CommanderType::Command);
+	AvatarCmd.cmdMax   = 100000.f;
+	AvatarCmd.cmdGauge = 100000.f;
+	AvatarCmd.cmdRate  = 100000.f;
 
 	if (!UnitClass)
 		UE_LOG(LogTemp, Error, TEXT("[FM] UnitClass가 None! FMSimManager 디테일에서 Unit Class를 BP_Unit으로 지정하세요."));
@@ -89,7 +88,9 @@ void AFMSimManager::BeginPlay()
 	{
 		// 매니저 액터가 놓인 자리에서 출발. 전투 유닛과 달리 CombatUnitIds에 넣지 않는다.
 		const FVector Home = GetActorLocation();
-		AvatarUnitId = SpawnSimUnit(EFMClass::Warrior, 1, Faction::Player, FVector2D(Home.X, Home.Y));
+		AvatarUnitId = SpawnSimUnit(EFMClass::Warrior, AVATAR_COMMANDER_ID, Faction::Player, FVector2D(Home.X, Home.Y));
+		if (Unit* Av = Sim.GetUnit(AvatarUnitId))
+			Av->moveSpeed = AvatarMoveSpeed;   // 직업 이속(전사 300=걷기) 대신 달리기 속도
 		UE_LOG(LogTemp, Warning, TEXT("[FM] 탐험 아바타 스폰 id=%llu"), AvatarUnitId);
 	}
 
@@ -183,6 +184,16 @@ void AFMSimManager::SetAvatarWorldPos(const FVector& WorldPos)
 	}
 }
 
+bool AFMSimManager::JumpAvatar()
+{
+	const Unit* Av = Sim.GetUnit(AvatarUnitId);
+	if (!Av || !Av->alive) return false;
+
+	TObjectPtr<AFMUnit>* Found = UnitActors.Find(AvatarUnitId);
+	AFMUnit* A = Found ? Found->Get() : nullptr;
+	return A && A->StartJump();
+}
+
 void AFMSimManager::ReturnToWorldMap()
 {
 	UFMGameInstance* GI = GetWorld() ? GetWorld()->GetGameInstance<UFMGameInstance>() : nullptr;
@@ -242,11 +253,16 @@ void AFMSimManager::StartEncounter(const FFMEncounterDef& Def, const FVector& Ce
 			CombatUnitIds.Add(Id);
 			UnitToMercId.Add(Id, M.id);
 
+			// 장비 보너스 적용 (공격력·최대체력) — 체력 복원보다 먼저 해야 상한이 맞는다
+			Sim.ApplyEquipment(Id, M.equip);
+
 			// 지난 전투 결과를 그대로 복원 — 죽었으면 죽은 채로 선다(시체로 스폰)
 			if (Unit* U = Sim.GetUnit(Id))
 			{
 				U->alive = M.alive;
 				U->hp    = M.alive ? FMath::Min(M.hp, U->maxHp) : 0.f;
+				UE_LOG(LogTemp, Warning, TEXT("[FM]   용병 #%u 스폰 — HP %.0f/%.0f 공격 %.0f"),
+					M.id, U->hp, U->maxHp, U->attackDamage);
 			}
 
 			++AllyCount;
@@ -286,7 +302,7 @@ void AFMSimManager::EndEncounter()
 			if (!M || !U) continue;
 
 			M->alive = U->alive;
-			M->hp    = U->alive ? FMath::Clamp(U->hp, 0.f, M->maxHp) : 0.f;
+			M->hp    = U->alive ? FMath::Clamp(U->hp, 0.f, M->TotalMaxHp()) : 0.f;   // 장비 포함 상한
 		}
 
 		if (UFMGameInstance* GI = GetWorld()->GetGameInstance<UFMGameInstance>())
@@ -621,12 +637,10 @@ TArray<FFMItemInfo> AFMSimManager::GetInventory() const
 	for (const ItemStack& S : M->inventory)
 	{
 		if (S.count <= 0) continue;
+		// 전투 중 아이템 목록 — 장비는 전투 중에 갈아입지 않으므로 소비 아이템만
+		if (GetItemDef(S.itemId).category != ItemCategory::Consumable) continue;
 
-		FFMItemInfo Info;
-		Info.ItemId = (int32)S.itemId;
-		Info.Count  = S.count;
-		Info.Name   = ((ItemType)S.itemId == ItemType::HealPotion) ? TEXT("회복 포션") : TEXT("아이템");
-		Out.Add(Info);
+		Out.Add(FMMakeItemInfo(S.itemId, S.count));
 	}
 	return Out;
 }
