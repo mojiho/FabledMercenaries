@@ -1,10 +1,12 @@
 #include "FMUnit.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "FMItemTypes.h"
 #include "Animation/AnimInstance.h"   // UAnimInstance::Montage_Play
 #include "Animation/AnimMontage.h"    // UAnimMontage 정의
 #include "Animation/AnimSequenceBase.h"
 #include "UObject/ConstructorHelpers.h"
-
+#include "Engine/StaticMesh.h"
 
 AFMUnit::AFMUnit()
 {
@@ -12,6 +14,11 @@ AFMUnit::AFMUnit()
 	Mesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Mesh"));
 	SetRootComponent(Mesh);
 
+	WeaponMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("WeaponMesh"));
+	WeaponMesh->SetupAttachment(Mesh,TEXT("weapon_r"));
+	WeaponMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);		// 바닥 트레이스가 무기를 바닥으로 잡지 않게
+	WeaponMesh->SetCastShadow(true);
+	
 	// 기본 점프 동작 — BP_Unit 디테일에서 바꿔 끼울 수 있다
 	static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> JumpFinder(
 		TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Jump/MM_Jump.MM_Jump"));
@@ -20,26 +27,62 @@ AFMUnit::AFMUnit()
 	static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> FallFinder(
 		TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Jump/MM_Fall_Loop.MM_Fall_Loop"));
 	if (FallFinder.Succeeded()) FallAnim = FallFinder.Object;
+	
 }
 
 void AFMUnit::UpdateFromSim(const FVector& Loc, const FVector& FacingDir, EUnitAnim NewAnim, float DeltaSeconds)
 {
-	// 속도 = 위치 변화량 / dt (이전 위치가 있을 때만)
-	const float HorizMove = bHasPrev ? FVector::Dist2D(Loc, PrevLoc) : 0.f;
+	// 등장 연출 — 뒤쪽 출발점에서 진형 자리(Sim 위치)로 달려 들어오며 나타난다
+	bool bEntering = false;
+	if (EntranceTime >= 0.f)
+	{
+		EntranceTime += DeltaSeconds;
+		const float Active = EntranceTime - EntranceDelay;                 // 음수 = 아직 출발 전 (안 보이는 채 대기)
+		const float T      = FMath::Clamp(Active / FMath::Max(EntranceRunTime, 0.05f), 0.f, 1.f);
+		CurrentEntranceOffset = EntranceFrom * (1.f - FMath::InterpEaseOut(0.f, 1.f, T, 2.f));   // 도착할수록 감속
+		SetFadeAlpha(FMath::Clamp(Active / FMath::Max(EntranceFadeTime, 0.05f), 0.f, 1.f));
+		bEntering = T < 1.f;
+
+		if (T >= 1.f && Active >= EntranceFadeTime)
+		{
+			EntranceTime = -1.f;                  // 끝 — 완전히 보이고 제자리
+			CurrentEntranceOffset = FVector::ZeroVector;
+			SetFadeAlpha(1.f);
+		}
+	}
+	const FVector VisLoc(Loc.X + CurrentEntranceOffset.X, Loc.Y + CurrentEntranceOffset.Y, Loc.Z);
+
+	// 속도 = (화면) 위치 변화량 / dt (이전 위치가 있을 때만)
+	const float HorizMove = bHasPrev ? FVector::Dist2D(VisLoc, PrevLoc) : 0.f;
 	if (bHasPrev && DeltaSeconds > 0.f)
-		ActualSpeed = FVector::Dist2D(Loc, PrevLoc) / DeltaSeconds;
+		ActualSpeed = HorizMove / DeltaSeconds;
 
 	// 움직이는 중이면 블렌드스페이스를 달리기 지점으로 — 멈추면 0이라 대기 모션 그대로
 	const bool bMoving = ActualSpeed > 5.f;
 	Speed = (bAlwaysRunAnim && bMoving) ? FMath::Max(ActualSpeed, RunAnimSpeed) : ActualSpeed;
-	PrevLoc = Loc;
+	PrevLoc = VisLoc;
 	bHasPrev = true;
 
 	// 지면 높이(Loc.Z)를 그대로 쓰지 않고 발 높이를 중력으로 굴린다 — 경사는 따라가고, 턱에선 떨어지고, 점프는 포물선
 	UpdateVertical(Loc.Z, HorizMove, DeltaSeconds);
-	const FVector DrawLoc(Loc.X, Loc.Y, VisualZ);
+	const FVector DrawLoc(VisLoc.X, VisLoc.Y, VisualZ);
 
 	SetActorLocation(DrawLoc);
+
+	// 달려 들어오는 동안은 진행 방향을 보고 달리기 상태로 (Sim 유닛은 이미 제자리에 서 있어 Idle이다)
+	if (bEntering && !bDead && NewAnim != EUnitAnim::Dead)
+	{
+		const FVector RunDir = -EntranceFrom.GetSafeNormal2D();
+		if (!RunDir.IsNearlyZero())
+		{
+			FRotator R = RunDir.Rotation();
+			R.Yaw += MeshYawOffset;
+			SetActorRotation(R);
+		}
+		Anim = (ActualSpeed > 5.f) ? EUnitAnim::Move : EUnitAnim::Idle;
+		return;
+	}
+
 	if (!FacingDir.IsNearlyZero())
 	{
 		FRotator R = FacingDir.Rotation();
@@ -115,6 +158,28 @@ void AFMUnit::Land()
 	FallMontage.Reset();
 }
 
+void AFMUnit::PlayEntrance(const FVector& FromOffset, float RunTime, float Delay)
+{
+	// 시체로 스폰된 용병은 달려오지 않고 제자리에서 나타나기만
+	const bool bCorpse = bDead || Anim == EUnitAnim::Dead;
+	EntranceFrom          = bCorpse ? FVector::ZeroVector : FVector(FromOffset.X, FromOffset.Y, 0.f);
+	CurrentEntranceOffset = EntranceFrom;
+	EntranceRunTime       = RunTime;
+	EntranceDelay         = Delay;
+	EntranceTime          = 0.f;
+	bHasPrev              = false;   // 출발점으로 순간이동하는 첫 프레임을 '달리기'로 재지 않게
+	bHasVisualZ           = false;
+	SetFadeAlpha(0.f);
+}
+
+void AFMUnit::SetFadeAlpha(float Alpha)
+{
+	if (!Mesh) return;
+	Mesh->SetScalarParameterValueOnMaterials(TEXT("FadeAlpha"), Alpha);
+	Mesh->SetVisibility(Alpha > 0.01f);   // 디더는 0에서도 점이 남을 수 있다 — 완전히 숨긴다
+	if (WeaponMesh) WeaponMesh->SetVisibility(Alpha > 0.99f);  // 몸이 다 나타난 뒤에 무기 표시
+}
+
 bool AFMUnit::StartJump()
 {
 	if (bDead || bAirborne || !bHasVisualZ) return false;
@@ -170,3 +235,19 @@ void AFMUnit::NotifySkillCast(int32 SkillType)
 	BP_OnSkillCast(SkillType);
 }
 
+void AFMUnit::BeginPlay()
+{
+	Super::BeginPlay();
+	UnarmedAttackMontage = AttackMontage;   // BP_Unit에 지정된 기본(맨손) 공격 모션 기억
+}
+
+void AFMUnit::SetWeaponVisual(const FFMWeaponVisual* V)
+{
+	WeaponMesh->SetStaticMesh(V ? V->Mesh.Get() : nullptr);
+	if (V)
+	{
+		WeaponMesh->AttachToComponent(Mesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, V->Socket);
+		WeaponMesh->SetRelativeScale3D(FVector(V->Scale));
+	}
+	AttackMontage = (V && V->AttackMontage) ? V->AttackMontage.Get() : UnarmedAttackMontage.Get();
+}

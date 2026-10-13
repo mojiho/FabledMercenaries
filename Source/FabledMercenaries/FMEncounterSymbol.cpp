@@ -44,8 +44,8 @@ void AFMEncounterSymbol::Tick(float DeltaSeconds)
 	AFMSimManager* M = Mgr.Get();
 	if (!M) return;
 
-	// 전투 중엔 심볼이 멈춘다 — 배회하다 다른 심볼을 끌고 오는 사고 방지
-	if (M->IsInCombat()) return;
+	// 전투 중(암전 전환 포함)엔 심볼이 멈춘다 — 배회하다 다른 심볼을 끌고 오는 사고 방지
+	if (M->IsInCombat() || M->IsEncounterTransitioning()) return;
 
 	if (bDrawDebugRadius)
 	{
@@ -67,8 +67,8 @@ void AFMEncounterSymbol::Tick(float DeltaSeconds)
 			const FVector Dir = FVector(Sym.X - AvatarPos.X, Sym.Y - AvatarPos.Y, 0.f);
 
 			bEngaged = true;
-			SetActorHiddenInGame(true);   // 전투 동안 숨김. 승리 시 Destroy, 패배 시 복귀
-			M->StartEncounter(Encounter, Mid, Dir);
+			// 화면이 완전히 어두워진 순간 매니저가 이 심볼을 숨기고 전투를 배치한다 (승리 시 Destroy, 패배 시 복귀)
+			M->RequestEncounter(Encounter, Mid, Dir, this);
 
 			UE_LOG(LogTemp, Warning, TEXT("[FM] 심볼 '%s' 조우 → 인카운터 '%s'"),
 				*GetName(), *Encounter.EncounterId.ToString());

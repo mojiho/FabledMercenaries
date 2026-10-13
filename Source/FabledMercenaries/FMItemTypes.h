@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/DataTable.h"
 #include "Sim/Item.h"
 #include "FMItemTypes.generated.h"
 
@@ -8,6 +9,10 @@
  * UI용 아이템 정보 — 전투 중 아이템 목록(SimManager)과 캐릭터 창 인벤토리(GameInstance)가 같이 쓴다.
  * 주의: 엔진 Slate(STreeView.h)에 이미 FItemInfo가 있어 이름 충돌 → FM 접두사 필수
  */
+
+class UStaticMesh;
+class UAnimMontage;
+
 USTRUCT(BlueprintType)
 struct FFMItemInfo
 {
@@ -63,3 +68,16 @@ inline FFMItemInfo FMMakeItemInfo(uint32 ItemId, int32 Count)
 	Info.HpBonus  = Def.hpBonus;
 	return Info;
 }
+
+/** 무기 아이템 → 손에 들 메시·공격 모션. 화면 연출 전용 **/
+USTRUCT(BlueprintType)
+struct FFMWeaponVisual : public FTableRowBase
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere) int32 ItemId = 0;                        // ItemType 값 (IronSword = 2)
+	UPROPERTY(EditAnywhere) TObjectPtr<UStaticMesh> Mesh;            // SM_Free_* (BP_Free_* 말고)
+	UPROPERTY(EditAnywhere) FName Socket = TEXT("weapon_r");
+	UPROPERTY(EditAnywhere) float Scale = 1.f;
+	UPROPERTY(EditAnywhere) TObjectPtr<UAnimMontage> AttackMontage;  // 비우면 맨손 모션
+};

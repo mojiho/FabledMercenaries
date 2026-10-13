@@ -117,6 +117,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Command")
 	TArray<FSkillInfo> GetSelectedUnitSkills() const;
 	
+	/** 무기 아이템 -> 손에 들 외형 **/
+	UPROPERTY(EditAnywhere, Category="Unit")
+	TObjectPtr<class UDataTable> WeaponVisualTable;
+	
 	/**
 	 * 선택 유닛의 특정 스킬 정보. 없으면 SkillType=0인 빈 값.
 	 * CdRemaining/bCanCast는 호출 시점 기준 실시간 값 → WBP_SkillRow가 Tick에서 불러
@@ -154,6 +158,41 @@ public:
 	 * FacingDir은 아군이 바라볼 방향(대개 아바타 → 심볼 방향). 이미 전투 중이면 무시.
 	 */
 	void StartEncounter(const FFMEncounterDef& Def, const FVector& Center, const FVector& FacingDir);
+
+	/**
+	 * 연출 붙은 전투 시작 — 화면 암전 → (완전히 어두워지면) 심볼 숨김 + 전투 배치 → 밝아지며
+	 * 양 진영이 각자 뒤쪽 맵 끝에서 달려 들어오고 서서히 나타난다. 등장이 끝날 때까지 조작은 막힌다.
+	 * 심볼 접촉은 이걸 부른다. (StartEncounter는 연출 없이 즉시 — 디버그 인카운터용)
+	 */
+	void RequestEncounter(const FFMEncounterDef& Def, const FVector& Center, const FVector& FacingDir, AActor* Symbol);
+
+	/** 암전 중 (요청 ~ 전투 배치 전) */
+	UFUNCTION(BlueprintPure, Category = "Encounter")
+	bool IsEncounterTransitioning() const { return bEncounterTransition; }
+
+	/** 암전 또는 등장 연출 중 — 이 동안 플레이어 명령을 받지 않는다 */
+	UFUNCTION(BlueprintPure, Category = "Encounter")
+	bool IsEncounterIntroPlaying() const;
+
+	/** 화면이 어두워지는 시간(초) */
+	UPROPERTY(EditAnywhere, Category = "Encounter|Intro")
+	float IntroFadeOutTime = 0.35f;
+
+	/** 화면이 다시 밝아지는 시간(초) */
+	UPROPERTY(EditAnywhere, Category = "Encounter|Intro")
+	float IntroFadeInTime = 0.6f;
+
+	/** 유닛이 진형 자리에서 이만큼 뒤(자기 진영 쪽 맵 끝)에서 출발한다 (cm) */
+	UPROPERTY(EditAnywhere, Category = "Encounter|Intro")
+	float IntroEntryDistance = 900.f;
+
+	/** 출발점에서 진형 자리까지 달려오는 시간(초) */
+	UPROPERTY(EditAnywhere, Category = "Encounter|Intro")
+	float IntroRunTime = 1.6f;
+
+	/** 유닛마다 출발을 0~이 값(초) 사이로 어긋나게 — 한 줄로 동시에 들어오면 기계적으로 보인다 */
+	UPROPERTY(EditAnywhere, Category = "Encounter|Intro")
+	float IntroStagger = 0.3f;
 
 	/** 전투 종료 — 이번 인카운터로 스폰된 유닛과 액터를 전부 걷어내고 탐험 상태로 되돌린다 */
 	void EndEncounter();
@@ -264,6 +303,18 @@ private:
 
 	FTimerHandle ReturnTimer;
 
+	// ── 인카운터 연출 ──
+	UFUNCTION()
+	void OnEncounterFadedOut();          // 화면이 완전히 어두워진 순간 — 여기서 전투를 배치한다
+
+	bool              bEncounterTransition = false;
+	float             IntroEndTime = 0.f;   // 등장 연출이 끝나는 월드 시간
+	FFMEncounterDef   PendingDef;
+	FVector           PendingCenter = FVector::ZeroVector;
+	FVector           PendingDir    = FVector::ForwardVector;
+	TWeakObjectPtr<AActor> PendingSymbol;
+	FTimerHandle      IntroTimer;
+
 	uint64 AvatarUnitId = 0;         // 탐험 아바타 — CombatUnitIds에 넣지 않아 전투 종료에도 살아남는다
 
 	static constexpr uint64 ENEMY_COMMANDER_ID = 2;
@@ -275,4 +326,6 @@ private:
 	 */
 	static constexpr uint64 AVATAR_COMMANDER_ID = 3;
 
+	const struct  FFMWeaponVisual* FindWeaponVisual(uint32 ItemId) const;
+	
 };

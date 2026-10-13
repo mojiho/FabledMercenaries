@@ -144,6 +144,9 @@ void AFabledMercenariesPlayerController::OnClickCommand()
 		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass()));
 	if (!Mgr) return;
 
+	// 인카운터 암전·등장 연출 중엔 명령을 받지 않는다
+	if (Mgr->IsEncounterIntroPlaying()) return;
+
 	// ── 스킬 모드: 조준 방식에 따라 분기 ──
 	if (bSkillMode)
 	{
@@ -370,6 +373,8 @@ void AFabledMercenariesPlayerController::OnRightClickCommand()
 	AFMSimManager* Mgr = Cast<AFMSimManager>(
 		UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass()));
 
+	if (Mgr && Mgr->IsEncounterIntroPlaying()) return;   // 연출 중 점프/취소 무시
+
 	// 목록이 떠 있으면 → 목록만 닫고 선택 유지 (= 링으로 복귀)
 	if (Mgr && Mgr->IsMenuOpen())
 	{
@@ -415,9 +420,10 @@ void AFabledMercenariesPlayerController::PlayerTick(float DeltaTime)
 	if (bWorldDragMove)
 	{
 		// 게임 창 밖에서 버튼을 떼면 Released 이벤트를 놓칠 수 있어 직접 확인
-		if (!IsInputKeyDown(EKeys::LeftMouseButton))
+		AFMSimManager* IntroMgr = Cast<AFMSimManager>(UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass()));
+		if (!IsInputKeyDown(EKeys::LeftMouseButton) || (IntroMgr && IntroMgr->IsEncounterIntroPlaying()))
 		{
-			bWorldDragMove = false;
+			bWorldDragMove = false;   // 뗐거나, 인카운터 연출이 시작됨
 		}
 		else
 		{
@@ -441,7 +447,7 @@ void AFabledMercenariesPlayerController::PlayerTick(float DeltaTime)
     if (AFMSimManager* SelMgr = Cast<AFMSimManager>(
         UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
     {
-        FVector SelPos;
+        FVector SelPos = FVector::ZeroVector;
         const bool bFollowSelected = SelMgr->HasSelectedUnit() && SelMgr->GetSelectedUnitWorldPos(SelPos);
         const bool bFollowAvatar   = !bFollowSelected
             && (SelMgr->bIsWorldMap || !SelMgr->IsInCombat())

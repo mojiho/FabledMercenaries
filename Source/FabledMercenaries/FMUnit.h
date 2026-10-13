@@ -10,6 +10,9 @@ enum class EUnitAnim : uint8
 	Idle, Move, Attack, Cast, Defend, Focus, Stun, Dead
 };
 
+class UStaticMeshComponent;
+struct FFMWeaponVisual;
+
 UCLASS()
 class FABLEDMERCENARIES_API AFMUnit : public AActor
 {
@@ -86,6 +89,25 @@ public:
 	UPROPERTY(EditAnywhere, Category="Anim") TObjectPtr<UAnimSequenceBase> FallAnim;
 	UPROPERTY(EditAnywhere, Category="Jump") float FallAnimDelay = 0.12f;
 
+	// ── 전투 등장 연출 ──
+	/**
+	 * FromOffset만큼 떨어진 곳(진영 뒤쪽 맵 끝)에서 Delay초 뒤 출발해 RunTime초 동안 달려 들어오며 서서히 나타난다.
+	 * Sim 위치는 이미 진형 자리 — 액터만 뒤에서 따라붙는 화면 연출. 시체(사망 상태로 스폰)는 제자리에서 나타나기만 한다.
+	 */
+	void PlayEntrance(const FVector& FromOffset, float RunTime, float Delay);
+
+	/** 지금 Sim 위치 대비 화면 위치 차이 (등장 연출 중에만 0이 아님) — SimManager가 그 자리 바닥 높이를 잴 때 쓴다 */
+	FVector GetEntranceOffset() const { return CurrentEntranceOffset; }
+
+	/** 서서히 나타나는 시간(초) — 달려오기 시작할 때부터 */
+	UPROPERTY(EditAnywhere, Category="Anim") float EntranceFadeTime = 0.7f;
+
+	/**
+	 * 투명도 (0=안 보임 1=보임). 머티리얼의 'FadeAlpha' 스칼라 파라미터를 바꾼다 —
+	 * 파라미터가 없는 머티리얼이면 효과 없음 (M_Mannequin에는 디더 마스크로 들어가 있다)
+	 */
+	UFUNCTION(BlueprintCallable, Category="Anim") void SetFadeAlpha(float Alpha);
+
 	/** 지금 화면상 발 높이. 아직 한 번도 갱신 안 됐으면 false */
 	bool GetFootZ(float& OutZ) const { OutZ = VisualZ; return bHasVisualZ; }
 
@@ -100,12 +122,24 @@ public:
 	UFUNCTION(BlueprintImplementableEvent, Category="Unit") void BP_OnDeath();
 	UFUNCTION(BlueprintImplementableEvent, Category="Unit") void BP_OnSkillCast(int32 SkillType);
 	
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Unit")
+	TObjectPtr<UStaticMeshComponent> WeaponMesh;
 	
+	/** 무기 외형 적용. null 이면 맨손 **/
+	void SetWeaponVisual(const FFMWeaponVisual* Visual);
+
 private:
 	void PlayOneShot(UAnimMontage* M, float Rate = 1.f);
 	
 	FVector PrevLoc = FVector::ZeroVector;   // 속도 계산용 이전 위치
 	bool bHasPrev = false;
+
+	// 등장 연출
+	FVector EntranceFrom = FVector::ZeroVector;      // 출발 오프셋 (Sim 위치 기준)
+	FVector CurrentEntranceOffset = FVector::ZeroVector;
+	float   EntranceTime = -1.f;                     // 음수 = 연출 없음
+	float   EntranceRunTime = 1.f;
+	float   EntranceDelay = 0.f;
 
 	// 수직 상태
 	void  UpdateVertical(float GroundZ, float HorizMove, float DeltaSeconds);
@@ -117,4 +151,8 @@ private:
 	float VertVel = 0.f;                     // 수직 속도(cm/s, 위가 +)
 	float AirTime = 0.f;
 	TWeakObjectPtr<UAnimMontage> FallMontage; // 재생 중인 낙하 루프 — 착지 때 멈춘다
+	
+	virtual void BeginPlay() override;
+	
+	UPROPERTY(Transient) TObjectPtr<UAnimMontage> UnarmedAttackMontage;		// 무기를 뺄 때 돌아갈 모션
 };

@@ -9,6 +9,8 @@
 #include "FMGameInstance.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Engine/DataTable.h"
 
 static EUnitAnim ToAnim(ActionState s)
 {
@@ -300,6 +302,11 @@ void AFMSimManager::StartEncounter(const FFMEncounterDef& Def, const FVector& Ce
 			// 장비 보너스 적용 (공격력·최대체력) — 체력 복원보다 먼저 해야 상한이 맞는다
 			Sim.ApplyEquipment(Id, M.equip);
 
+			// 무기 외형 — 스탯(ApplyEquipment)과 같은 장비 데이터에서
+			if (TObjectPtr<AFMUnit>* Found = UnitActors.Find(Id))
+				if (AFMUnit* A = Found->Get())
+					A->SetWeaponVisual(FindWeaponVisual(M.equip[(int)EquipSlot::Weapon - 1]));
+			
 			// 지난 전투 결과를 그대로 복원 — 죽었으면 죽은 채로 선다(시체로 스폰)
 			if (Unit* U = Sim.GetUnit(Id))
 			{
@@ -330,6 +337,70 @@ void AFMSimManager::StartEncounter(const FFMEncounterDef& Def, const FVector& Ce
 
 	UE_LOG(LogTemp, Warning, TEXT("[FM] 인카운터 시작 '%s' — 아군 %d기(생존 %d), 적 %d기 (중점 %s)"),
 		*Def.EncounterId.ToString(), AllyCount, AliveAllyCount, Def.Enemies.Num(), *Center.ToCompactString());
+}
+
+void AFMSimManager::RequestEncounter(const FFMEncounterDef& Def, const FVector& Center, const FVector& FacingDir, AActor* Symbol)
+{
+	if (bInCombat || bEncounterTransition) return;
+
+	bEncounterTransition = true;
+	PendingDef    = Def;
+	PendingCenter = Center;
+	PendingDir    = FacingDir;
+	PendingSymbol = Symbol;
+
+	// 아바타 정지 — 어두워지는 동안 계속 걸어가지 않게
+	if (Unit* Av = Sim.GetUnit(AvatarUnitId))
+	{
+		Av->executing = false;
+		Av->reserveQueue.clear();
+	}
+
+	if (APlayerCameraManager* Cam = UGameplayStatics::GetPlayerCameraManager(this, 0))
+		Cam->StartCameraFade(0.f, 1.f, IntroFadeOutTime, FLinearColor::Black, false, true);   // 끝나도 검은 화면 유지
+
+	GetWorldTimerManager().SetTimer(IntroTimer, this, &AFMSimManager::OnEncounterFadedOut,
+		FMath::Max(IntroFadeOutTime, 0.01f), false);
+}
+
+void AFMSimManager::OnEncounterFadedOut()
+{
+	bEncounterTransition = false;
+
+	if (AActor* Sym = PendingSymbol.Get())
+		Sym->SetActorHiddenInGame(true);   // 전투 동안 숨김 (심볼이 결과에 따라 Destroy/복귀)
+	PendingSymbol.Reset();
+
+	StartEncounter(PendingDef, PendingCenter, PendingDir);
+
+	// 등장 — 아군은 진형 뒤쪽(-Fwd), 적은 반대편(+Fwd)에서 달려 들어온다. Sim 위치는 이미 진형 자리이고,
+	// 액터만 뒤에서 출발해 따라붙는다 (화면 연출 — Sim/서버엔 영향 없음)
+	FVector Fwd = PendingDir.GetSafeNormal2D();
+	if (Fwd.IsNearlyZero()) Fwd = FVector::ForwardVector;
+
+	float MaxDelay = 0.f;
+	for (uint64 Id : CombatUnitIds)
+	{
+		const Unit* U = Sim.GetUnit(Id);
+		TObjectPtr<AFMUnit>* Found = UnitActors.Find(Id);
+		AFMUnit* A = Found ? Found->Get() : nullptr;
+		if (!U || !A) continue;
+
+		const FVector Back  = (U->faction == Faction::Hostile) ? Fwd : -Fwd;
+		const float   Delay = FMath::FRandRange(0.f, IntroStagger);
+		// 시체로 스폰된 용병은 달려오지 않고 제자리에서 나타나기만
+		A->PlayEntrance(U->alive ? Back * IntroEntryDistance : FVector::ZeroVector, IntroRunTime, Delay);
+		MaxDelay = FMath::Max(MaxDelay, Delay);
+	}
+	IntroEndTime = GetWorld()->GetTimeSeconds() + MaxDelay + IntroRunTime;
+
+	if (APlayerCameraManager* Cam = UGameplayStatics::GetPlayerCameraManager(this, 0))
+		Cam->StartCameraFade(1.f, 0.f, IntroFadeInTime, FLinearColor::Black, false, false);
+}
+
+bool AFMSimManager::IsEncounterIntroPlaying() const
+{
+	return bEncounterTransition || (GetWorld() && GetWorld()->GetTimeSeconds() < IntroEndTime);
 }
 
 void AFMSimManager::EndEncounter()
@@ -435,9 +506,14 @@ void AFMSimManager::Tick(float DeltaSeconds)
 		// 화면 액터 갱신 — 죽어도 실행(Dead 애님 전달 → 쓰러지는 모션, 시체 남음)
 		if (TObjectPtr<AFMUnit>* Found = UnitActors.Find(Pair.first))
 		{
-			FVector FloorLoc(U.pos.x, U.pos.y, GroundZAt(U.pos.x, U.pos.y));
+			// 등장 연출 중이면 액터가 Sim 위치에서 떨어져 있다 — 그 자리 바닥 높이를 쓴다
+			const FVector Off = (*Found)->GetEntranceOffset();
+			FVector FloorLoc(U.pos.x, U.pos.y, GroundZAt(U.pos.x + Off.X, U.pos.y + Off.Y));
 			FVector FacingDir(U.facing.x, U.facing.y, 0.f);
 			(*Found)->UpdateFromSim(FloorLoc, FacingDir, ToAnim(U.GetActionState()), DeltaSeconds);
+
+			// 등장 연출로 달려오는 중엔 발밑 링/HP바를 그리지 않는다 — Sim 자리(진형)에 빈 링이 먼저 떠 보이므로
+			if (!(*Found)->GetEntranceOffset().IsNearlyZero()) continue;
 		}
 
 		if (!U.alive) continue;   // 죽은 유닛은 아래 UI(링/HP/MP/화살표) 생략
@@ -815,4 +891,14 @@ void AFMSimManager::CastSkillAtPoint(int32 SkillType, const FVector& WorldPos)
 	Sim.IssueCommand(SelectedUnitId, c, false);
 	SelectedUnitId = 0;
 	bTargeting     = false;
+}
+
+const struct FFMWeaponVisual* AFMSimManager::FindWeaponVisual(uint32 ItemId) const
+{
+	if (!WeaponVisualTable || ItemId == 0) return nullptr;
+	TArray<FFMWeaponVisual*> Rows;
+	WeaponVisualTable->GetAllRows(TEXT("WeaponVisual"),Rows);
+	for (const FFMWeaponVisual* Row : Rows)
+		if (Row && Row->ItemId == (int32)ItemId) return Row;
+	return nullptr;
 }
