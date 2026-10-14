@@ -76,3 +76,7 @@ DerivedDataCache/*
 
 # Archives (don't commit zipped projects)
 *.zip
+
+# Paragon 캐릭터 팩 (Fab 무료, 2.4GB) — GitHub 푸시 한도 초과라 저장소에 넣지 않는다.
+# 다른 PC에서는 Fab에서 "Paragon: Kwang"을 프로젝트에 다시 추가할 것 (공격 애니메이션 PrimaryAttack_A/B/C_Slow 사용)
+Content/ParagonKwang/

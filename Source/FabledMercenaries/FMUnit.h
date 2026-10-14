@@ -128,6 +128,10 @@ public:
 	/** 무기 외형 적용. null 이면 맨손 **/
 	void SetWeaponVisual(const FFMWeaponVisual* Visual);
 
+	/** 왼손 — 방패(shield_l 소켓) 또는 쌍수 무기(weapon_l 소켓). 세트 무기 아이템이 채운다 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Unit")
+	TObjectPtr<UStaticMeshComponent> OffhandMesh;
+
 private:
 	void PlayOneShot(UAnimMontage* M, float Rate = 1.f);
 	
@@ -154,5 +158,10 @@ private:
 	
 	virtual void BeginPlay() override;
 	
-	UPROPERTY(Transient) TObjectPtr<UAnimMontage> UnarmedAttackMontage;		// 무기를 뺄 때 돌아갈 모션
+	UPROPERTY(Transient) TObjectPtr<UAnimMontage> UnarmedAttackMontage;
+
+	/** 장착 무기의 공격 동작들 (콤보 순서) — 비어 있으면 AttackMontage */
+	UPROPERTY(Transient) TArray<TObjectPtr<UAnimSequenceBase>> WeaponAttackAnims;
+	float WeaponAttackRate = 1.f;
+	int32 AttackComboIndex = 0;		// 무기를 뺄 때 돌아갈 모션
 };

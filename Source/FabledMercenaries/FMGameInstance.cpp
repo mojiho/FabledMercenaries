@@ -98,6 +98,8 @@ void UFMGameInstance::Init()
 	Meta.Add((uint32)ItemType::IronSword, 2);
 	Meta.Add((uint32)ItemType::LeatherArmor, 1);
 	Meta.Add((uint32)ItemType::PowerRing, 1);
+	Meta.Add((uint32)ItemType::SwordAndShield, 1);
+	Meta.Add((uint32)ItemType::TwinSwords, 1);
 
 	// 초기 용병단 — 나중에 고용/상점으로 대체. 전투엔 이 순서대로 한 줄로 선다.
 	Meta.Hire(Class::Warrior);

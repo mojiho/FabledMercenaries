@@ -12,6 +12,7 @@
 
 class UStaticMesh;
 class UAnimMontage;
+class UAnimSequenceBase;
 
 USTRUCT(BlueprintType)
 struct FFMItemInfo
@@ -36,6 +37,8 @@ inline FString FMItemName(uint32 ItemId)
 	case ItemType::IronSword:    return TEXT("철검");
 	case ItemType::LeatherArmor: return TEXT("가죽 갑옷");
 	case ItemType::PowerRing:    return TEXT("힘의 반지");
+	case ItemType::SwordAndShield: return TEXT("검과 방패");
+	case ItemType::TwinSwords:   return TEXT("쌍검");
 	default:                     return TEXT("아이템");
 	}
 }
@@ -75,9 +78,36 @@ struct FFMWeaponVisual : public FTableRowBase
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere) int32 ItemId = 0;                        // ItemType 값 (IronSword = 2)
-	UPROPERTY(EditAnywhere) TObjectPtr<UStaticMesh> Mesh;            // SM_Free_* (BP_Free_* 말고)
+	/** ItemType 값 (IronSword = 2, SwordAndShield = 5, TwinSwords = 6) */
+	UPROPERTY(EditAnywhere) int32 ItemId = 0;
+
+	/** 오른손 메시 — SM_Free_* (BP_Free_* 말고) */
+	UPROPERTY(EditAnywhere) TObjectPtr<UStaticMesh> Mesh;
+
+	/** 오른손 소켓 */
 	UPROPERTY(EditAnywhere) FName Socket = TEXT("weapon_r");
+
 	UPROPERTY(EditAnywhere) float Scale = 1.f;
-	UPROPERTY(EditAnywhere) TObjectPtr<UAnimMontage> AttackMontage;  // 비우면 맨손 모션
+
+	/** 공격 몽타주 (DefaultSlot). AttackAnims가 있으면 그쪽이 우선. 둘 다 비우면 맨손 모션 */
+	UPROPERTY(EditAnywhere) TObjectPtr<UAnimMontage> AttackMontage;
+
+	/**
+	 * 공격 동작 시퀀스 — 타격(AttackFired) 순간 DefaultSlot으로 재생. 여러 개면 공격할 때마다 차례로 (콤보).
+	 * Kwang 같은 호환 스켈레톤의 시퀀스를 바로 넣을 수 있다 (UpperBody 슬롯을 쓰는 원본 몽타주는 못 씀)
+	 */
+	UPROPERTY(EditAnywhere) TArray<TObjectPtr<UAnimSequenceBase>> AttackAnims;
+
+	/** 공격 동작 재생 속도 */
+	UPROPERTY(EditAnywhere) float AttackAnimRate = 1.f;
+
+	// ── 왼손 (세트 무기: 검+방패, 쌍검) — 비우면 왼손은 빈손 ──
+
+	/** 왼손 메시 — 방패면 SM_Free_Shield_*, 쌍검이면 SM_Free_Sword_* */
+	UPROPERTY(EditAnywhere) TObjectPtr<UStaticMesh> OffhandMesh;
+
+	/** 왼손 소켓 — 방패는 shield_l (팔뚝), 무기는 weapon_l (손) */
+	UPROPERTY(EditAnywhere) FName OffhandSocket = TEXT("weapon_l");
+
+	UPROPERTY(EditAnywhere) float OffhandScale = 1.f;
 };

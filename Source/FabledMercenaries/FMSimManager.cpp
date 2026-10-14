@@ -11,6 +11,7 @@
 #include "TimerManager.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Engine/DataTable.h"
+#include "UObject/ConstructorHelpers.h"
 
 static EUnitAnim ToAnim(ActionState s)
 {
@@ -32,6 +33,10 @@ static EUnitAnim ToAnim(ActionState s)
 AFMSimManager::AFMSimManager()
 {
 	PrimaryActorTick.bCanEverTick = true;		// 매 프레임마다 Tick() 호출
+
+	// 무기 외형 테이블 기본값 — 레벨마다 지정하지 않아도 되게. (레벨에서 다른 테이블로 바꿔 끼울 수는 있다)
+	static ConstructorHelpers::FObjectFinder<UDataTable> WeaponTableFinder(TEXT("/Game/Data/DT_WeaponVisuals.DT_WeaponVisuals"));
+	if (WeaponTableFinder.Succeeded()) WeaponVisualTable = WeaponTableFinder.Object;
 
 	// 기존에 BeginPlay에 하드코딩돼 있던 3v3을 그대로 데이터로 옮긴 것.
 	// 심볼 인카운터가 붙기 전까지 전투를 바로 띄워보는 용도.
@@ -303,9 +308,14 @@ void AFMSimManager::StartEncounter(const FFMEncounterDef& Def, const FVector& Ce
 			Sim.ApplyEquipment(Id, M.equip);
 
 			// 무기 외형 — 스탯(ApplyEquipment)과 같은 장비 데이터에서
+			const uint32 WeaponId = M.equip[(int)EquipSlot::Weapon - 1];
+			const FFMWeaponVisual* Visual = FindWeaponVisual(WeaponId);
+			if (WeaponId != 0 && !Visual)
+				UE_LOG(LogTemp, Warning, TEXT("[FM]   용병 #%u 무기(%s) 외형 없음 — WeaponVisualTable 미지정이거나 DT에 ItemId %u 행이 없음"),
+					M.id, *FMItemName(WeaponId), WeaponId);
 			if (TObjectPtr<AFMUnit>* Found = UnitActors.Find(Id))
 				if (AFMUnit* A = Found->Get())
-					A->SetWeaponVisual(FindWeaponVisual(M.equip[(int)EquipSlot::Weapon - 1]));
+					A->SetWeaponVisual(Visual);
 			
 			// 지난 전투 결과를 그대로 복원 — 죽었으면 죽은 채로 선다(시체로 스폰)
 			if (Unit* U = Sim.GetUnit(Id))

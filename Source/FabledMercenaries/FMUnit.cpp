@@ -18,6 +18,11 @@ AFMUnit::AFMUnit()
 	WeaponMesh->SetupAttachment(Mesh,TEXT("weapon_r"));
 	WeaponMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);		// 바닥 트레이스가 무기를 바닥으로 잡지 않게
 	WeaponMesh->SetCastShadow(true);
+
+	OffhandMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("OffhandMesh"));
+	OffhandMesh->SetupAttachment(Mesh, TEXT("weapon_l"));
+	OffhandMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);   // 무기와 같은 이유 — 바닥 트레이스에 안 걸리게
+	OffhandMesh->SetCastShadow(true);
 	
 	// 기본 점프 동작 — BP_Unit 디테일에서 바꿔 끼울 수 있다
 	static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> JumpFinder(
@@ -89,7 +94,8 @@ void AFMUnit::UpdateFromSim(const FVector& Loc, const FVector& FacingDir, EUnitA
 		R.Yaw += MeshYawOffset;
 		SetActorRotation(R);
 	}
-	Anim = NewAnim;
+	// 무기 공격 동작이 있으면 선딜 동안 AnimBP의 맨손 공격(펀치) 상태로 가지 않게 — 대기 자세로 있다가 타격 순간 휘두른다
+	Anim = (NewAnim == EUnitAnim::Attack && WeaponAttackAnims.Num() > 0) ? EUnitAnim::Idle : NewAnim;
 }
 
 void AFMUnit::UpdateVertical(float GroundZ, float HorizMove, float DeltaSeconds)
@@ -177,7 +183,8 @@ void AFMUnit::SetFadeAlpha(float Alpha)
 	if (!Mesh) return;
 	Mesh->SetScalarParameterValueOnMaterials(TEXT("FadeAlpha"), Alpha);
 	Mesh->SetVisibility(Alpha > 0.01f);   // 디더는 0에서도 점이 남을 수 있다 — 완전히 숨긴다
-	if (WeaponMesh) WeaponMesh->SetVisibility(Alpha > 0.99f);  // 몸이 다 나타난 뒤에 무기 표시
+	if (WeaponMesh)  WeaponMesh->SetVisibility(Alpha > 0.99f);  // 몸이 다 나타난 뒤에 무기 표시
+	if (OffhandMesh) OffhandMesh->SetVisibility(Alpha > 0.99f);
 }
 
 bool AFMUnit::StartJump()
@@ -211,7 +218,19 @@ void AFMUnit::PlayOneShot(UAnimMontage* M, float Rate)
 
 void AFMUnit::NotifyAttackFired()
 {
-	PlayOneShot(AttackMontage);
+	// 무기 공격 동작이 있으면 콤보 순서대로 (A → B → C → A …). 타격 순간에 시작한다
+	if (WeaponAttackAnims.Num() > 0 && Mesh)
+	{
+		UAnimSequenceBase* SwingAnim = WeaponAttackAnims[AttackComboIndex % WeaponAttackAnims.Num()];
+		AttackComboIndex = (AttackComboIndex + 1) % WeaponAttackAnims.Num();
+		if (SwingAnim)
+			if (UAnimInstance* Inst = Mesh->GetAnimInstance())
+				Inst->PlaySlotAnimationAsDynamicMontage(SwingAnim, TEXT("DefaultSlot"), 0.08f, 0.25f, WeaponAttackRate);
+	}
+	else
+	{
+		PlayOneShot(AttackMontage);
+	}
 	BP_OnAttackFired();
 }
 
@@ -250,4 +269,17 @@ void AFMUnit::SetWeaponVisual(const FFMWeaponVisual* V)
 		WeaponMesh->SetRelativeScale3D(FVector(V->Scale));
 	}
 	AttackMontage = (V && V->AttackMontage) ? V->AttackMontage.Get() : UnarmedAttackMontage.Get();
+	WeaponAttackAnims.Reset();
+	if (V) WeaponAttackAnims = V->AttackAnims;
+	WeaponAttackRate = V ? FMath::Max(V->AttackAnimRate, 0.05f) : 1.f;
+	AttackComboIndex = 0;
+
+	// 왼손 — 세트 무기면 방패/두 번째 무기, 아니면 비운다
+	UStaticMesh* Off = V ? V->OffhandMesh.Get() : nullptr;
+	OffhandMesh->SetStaticMesh(Off);
+	if (Off)
+	{
+		OffhandMesh->AttachToComponent(Mesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, V->OffhandSocket);
+		OffhandMesh->SetRelativeScale3D(FVector(V->OffhandScale));
+	}
 }

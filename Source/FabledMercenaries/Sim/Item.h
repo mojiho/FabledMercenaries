@@ -7,7 +7,7 @@
 // Sim은 itemId → 효과 테이블만 안다(결정적 처리 = 서버/클라 동일).
 // </summary>
 enum class ItemCategory : uint8_t { Consumable, Equipment };
-enum class ItemType : uint8_t { None, HealPotion, IronSword, LeatherArmor, PowerRing };
+enum class ItemType : uint8_t { None, HealPotion, IronSword, LeatherArmor, PowerRing, SwordAndShield, TwinSwords };
 enum class EquipSlot : uint8_t { None, Weapon, Armor, Accessory };
 
 constexpr int EQUIP_SLOT_COUNT = 3;   // Weapon/Armor/Accessory — 배열 인덱스는 (EquipSlot - 1)
@@ -44,6 +44,17 @@ inline ItemDef GetItemDef(uint32_t itemId)
 		d.category = ItemCategory::Equipment;
 		d.slot     = EquipSlot::Armor;
 		d.hpBonus  = 40.f;
+		break;
+	case ItemType::SwordAndShield:   // 검 + 방패 — 무기 칸 하나. 방패만큼 체력이 붙는다
+		d.category = ItemCategory::Equipment;
+		d.slot     = EquipSlot::Weapon;
+		d.atkBonus = 6.f;
+		d.hpBonus  = 30.f;
+		break;
+	case ItemType::TwinSwords:       // 쌍검 — 무기 칸 하나. 두 자루라 공격이 높다
+		d.category = ItemCategory::Equipment;
+		d.slot     = EquipSlot::Weapon;
+		d.atkBonus = 12.f;
 		break;
 	case ItemType::PowerRing:
 		d.category = ItemCategory::Equipment;
