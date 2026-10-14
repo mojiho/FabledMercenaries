@@ -269,8 +269,11 @@ void AFMUnit::SetWeaponVisual(const FFMWeaponVisual* V)
 		WeaponMesh->SetRelativeScale3D(FVector(V->Scale));
 	}
 	AttackMontage = (V && V->AttackMontage) ? V->AttackMontage.Get() : UnarmedAttackMontage.Get();
+	// 로드 안 된 동작(예: Paragon 팩이 없는 PC)은 빼고 담는다 — 하나도 없으면 맨손 공격 모션으로 돌아간다
 	WeaponAttackAnims.Reset();
-	if (V) WeaponAttackAnims = V->AttackAnims;
+	if (V)
+		for (UAnimSequenceBase* A : V->AttackAnims)
+			if (A) WeaponAttackAnims.Add(A);
 	WeaponAttackRate = V ? FMath::Max(V->AttackAnimRate, 0.05f) : 1.f;
 	AttackComboIndex = 0;
 
