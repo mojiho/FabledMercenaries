@@ -8,6 +8,24 @@
 #include "UObject/ConstructorHelpers.h"
 #include "Engine/StaticMesh.h"
 
+void AFMUnit::SetCommandReady(bool bReady)
+{
+	if (bCommandReady == bReady) return;   // 매 프레임 불린다 — 바뀔 때만 건드린다
+	bCommandReady = bReady;
+
+	auto Apply = [this, bReady](UPrimitiveComponent* C)
+	{
+		if (!C) return;
+		C->SetCustomDepthStencilValue(bReady ? CommandReadyStencil : 0);
+		C->SetRenderCustomDepth(bReady);
+	};
+
+	// 무기까지 같이 켜야 실루엣이 끊기지 않는다
+	Apply(Mesh);
+	Apply(WeaponMesh);
+	Apply(OffhandMesh);
+}
+
 AFMUnit::AFMUnit()
 {
 	PrimaryActorTick.bCanEverTick = false;   // 매니저가 갱신하니 자체 Tick 불필요

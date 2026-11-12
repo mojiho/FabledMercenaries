@@ -1,42 +1,30 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Blueprint/UserWidget.h"
-#include "Components/Button.h"
+#include "FMItemHostWidget.h"
+#include "FMEncounter.h"      // EFMClass — ClassPortraits 키
 #include "FMCharPanelWidget.generated.h"
 
 class UTextBlock;
-class UPanelWidget;
-
-/** 인벤토리 한 줄 — 누르면 자기 ItemId를 알린다 (UButton OnClicked엔 인자가 없어서 따로 둔다) */
-UCLASS()
-class FABLEDMERCENARIES_API UFMItemButton : public UButton
-{
-	GENERATED_BODY()
-
-public:
-	int32 ItemId = 0;
-
-	DECLARE_DELEGATE_OneParam(FOnPicked, int32 /*ItemId*/);
-	FOnPicked OnPicked;
-
-	UFUNCTION()
-	void HandleClicked() { OnPicked.ExecuteIfBound(ItemId); }
-};
+class UImage;
+class UButton;
+class UFMEquipSlotWidget;
 
 /**
- * 캐릭터 창 (WBP_CharPanel의 부모) — 선택한 용병의 스탯·장비 3칸 + 공용 인벤토리.
+ * 캐릭터 창 (WBP_CharPanel의 부모) — 선택한 용병의 스탯·장비칸·공용 인벤토리.
  *
  * - 카드 클릭 → GameInstance.OnMercSelected → 이 창이 그 용병으로 열린다. 같은 카드를 다시 누르면 닫힌다.
  *   창은 HUD의 PanelSwitcher 안에 있으므로 부모 스위처를 직접 켜고 끈다.
- * - 인벤토리 줄 클릭: 장비면 장착(같은 칸 장비는 반납), 소비 아이템이면 사용(포션 = 회복)
+ * - 인벤토리 줄을 장비 칸으로 끌어다 놓거나, 줄을 우클릭하면 장착(소비 아이템이면 사용).
+ *   장비 칸이 아닌 창 아무 데나 떨어뜨려도 제 칸을 찾아 들어간다.
  * - 장비 칸 클릭: 해제 → 인벤토리로
+ * - 장착 대상은 언제나 '지금 이 창이 보여주고 있는 용병'(CurrentMercId)이다.
  * - 변경은 전부 GameInstance가 처리하고 OnRosterChanged를 쏜다 → 이 창과 카드 목록이 함께 다시 그려진다.
  *
  * 레이아웃은 WBP에서 자유롭게 바꿔도 된다 — 아래 이름의 위젯만 있으면 된다.
  */
 UCLASS(Abstract)
-class FABLEDMERCENARIES_API UFMCharPanelWidget : public UUserWidget
+class FABLEDMERCENARIES_API UFMCharPanelWidget : public UFMItemHostWidget
 {
 	GENERATED_BODY()
 
@@ -52,32 +40,47 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "CharPanel")
 	int32 CurrentMercId = 0;
 
+	/** 이 창은 '보여주고 있는 용병'이 곧 대상이다 */
+	virtual int32 GetMercId() const override { return CurrentMercId; }
+
+	UFUNCTION(BlueprintCallable, Category = "CharPanel")
+	bool UnequipSlot(int32 EquipSlotValue);
+
 protected:
 	// ── 디자이너 위젯 (이름으로 연결) ──
-	UPROPERTY(meta = (BindWidget))         TObjectPtr<UTextBlock>   TitleText;      // "전사"
-	UPROPERTY(meta = (BindWidget))         TObjectPtr<UTextBlock>   StatText;       // "HP 130 / 170   공격력 37"
-	UPROPERTY(meta = (BindWidget))         TObjectPtr<UButton>      WeaponButton;
-	UPROPERTY(meta = (BindWidget))         TObjectPtr<UTextBlock>   WeaponText;
-	UPROPERTY(meta = (BindWidget))         TObjectPtr<UButton>      ArmorButton;
-	UPROPERTY(meta = (BindWidget))         TObjectPtr<UTextBlock>   ArmorText;
-	UPROPERTY(meta = (BindWidget))         TObjectPtr<UButton>      AccessoryButton;
-	UPROPERTY(meta = (BindWidget))         TObjectPtr<UTextBlock>   AccessoryText;
-	UPROPERTY(meta = (BindWidget))         TObjectPtr<UPanelWidget> InvList;        // 인벤토리 줄이 들어갈 곳 (ScrollBox 등)
+	UPROPERTY(meta = (BindWidget))         TObjectPtr<UTextBlock> TitleText;       // "전사"
+	UPROPERTY(meta = (BindWidget))         TObjectPtr<UTextBlock> StatText;        // "HP 130 / 170   공격력 37"
 
-	/** 인벤토리 줄 글자 크기 */
-	UPROPERTY(EditAnywhere, Category = "CharPanel")
-	int32 RowFontSize = 14;
+	// 장비 칸 — 좌우로 나눠 배치하면 페이퍼돌 모양이 된다
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UFMEquipSlotWidget> WeaponSlot;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UFMEquipSlotWidget> ArmorSlot;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UFMEquipSlotWidget> AccessorySlot;
+
+	/** 가운데 캐릭터 그림 — ClassPortraits에서 가져온다 */
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> PortraitImage;
+
+	// 구(舊) 글자만 있던 장비 칸 — 새 WBP로 옮기고 나면 지워도 된다
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton>    WeaponButton;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> WeaponText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton>    ArmorButton;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ArmorText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton>    AccessoryButton;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> AccessoryText;
+
+	/** 클래스별 캐릭터 그림 */
+	UPROPERTY(EditDefaultsOnly, Category = "CharPanel")
+	TMap<EFMClass, TObjectPtr<UTexture2D>> ClassPortraits;
 
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
+
+	// 장비 칸 밖에 떨어뜨려도 제 칸을 찾아 들어가게
+	virtual bool NativeOnDragOver(const FGeometry& Geometry, const FDragDropEvent& Event, UDragDropOperation* Op) override;
+	virtual bool NativeOnDrop(const FGeometry& Geometry, const FDragDropEvent& Event, UDragDropOperation* Op) override;
 
 	UFUNCTION() void HandleMercSelected(int32 MercId);
 	UFUNCTION() void HandleRosterChanged() { Refresh(); }
 	UFUNCTION() void HandleWeaponClicked();
 	UFUNCTION() void HandleArmorClicked();
 	UFUNCTION() void HandleAccessoryClicked();
-
-	void HandleItemPicked(int32 ItemId);
-	void Unequip(int32 EquipSlotValue);
-	class UFMGameInstance* GetFMGI() const;
 };

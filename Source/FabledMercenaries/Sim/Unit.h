@@ -52,6 +52,20 @@ public:
 	std::deque<Command> reserveQueue;
 	int    curWaypoint = 0;
 	float  stunRemaining = 0.f;           // 스턴 남은 시간(초)
+
+	// --- 턴테이블 (명령 수령 게이지) ---
+	// 명령을 '수행'하는 것과는 별개로, 이 유닛이 '다음 명령을 받을 수 있는가'만 센다.
+	// 수행 중에도 계속 돈다 — 이동/공격 중에 새 명령으로 인터럽트하는 게 이 전투의 핵심이라
+	// 게이지를 수행 상태에 묶으면 안 된다. (execGauge = 수행 진행도, 별개의 축)
+	// turnMax == 0 이면 턴 제한 없음(탐험 중 아바타처럼 상시 명령 가능한 유닛).
+	float  turnGauge = 0.f;
+	float  turnMax   = 2.0f;              // 가득 차면 명령 1회분
+	float  turnRate  = 1.0f;              // 초당 충전
+
+	bool TurnReady() const { return turnGauge >= turnMax; }
+
+	/** 0~1. 화면 게이지바용. turnMax가 0이면 항상 가득 찬 것으로 본다 */
+	float TurnRatio() const { return (turnMax > 0.f) ? (turnGauge / turnMax) : 1.f; }
 	bool defendStance = false;                 // 방어 태세 중(방어 스킬 시전 중)
 
 	// 표현(애니)용 파생 상태 — Sim은 애니를 모르고 상태만 노출

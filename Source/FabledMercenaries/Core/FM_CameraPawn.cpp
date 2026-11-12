@@ -1,6 +1,8 @@
 #include "Core/FM_CameraPawn.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "Materials/MaterialInterface.h"
+#include "UObject/ConstructorHelpers.h"
 
 AFM_CameraPawn::AFM_CameraPawn()
 {
@@ -24,6 +26,19 @@ AFM_CameraPawn::AFM_CameraPawn()
 	CameraComponent = CreateDefaultSubobject<UCameraComponent>(TEXT("CameraComponent"));
 	CameraComponent->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
 	CameraComponent->bUsePawnControlRotation = false;
+
+	// 외곽선 포스트 프로세스 기본값 — 디테일 패널에서 비우면 외곽선이 꺼진다
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> OutlineMat(
+		TEXT("/Game/FX/M_PP_CommandReadyOutline.M_PP_CommandReadyOutline"));
+	if (OutlineMat.Succeeded()) OutlineMaterial = OutlineMat.Object;
+}
+
+void AFM_CameraPawn::BeginPlay()
+{
+	Super::BeginPlay();
+
+	if (CameraComponent && OutlineMaterial)
+		CameraComponent->PostProcessSettings.AddBlendable(OutlineMaterial, 1.f);
 }
 
 void AFM_CameraPawn::Tick(float DeltaTime)

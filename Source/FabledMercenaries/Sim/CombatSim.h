@@ -78,6 +78,7 @@ private:
 	static constexpr float DISOBEY_MAX   = 0.75f;  // 불복종 확률 상한
 
 	bool ResolveHit(Unit& target, const Vec3& fromPos, float damage);		// 피격 처리. 방어/크리 판정, HP 감소, 사망 처리. true=살아있음, false=사망
+	void ApplyAreaDamage(const Unit& caster, const Vec3& center, float radius, float damage);	// 범위 피해. center 반경 안의 '적'만, 거리는 평면(XY)으로 잰다
 	void SpawnProjectile(Unit& owner, Unit& tartget, float damage, bool arc);						// 발사체 생성. owner=발사자, target=목표. Projectile 목록에 추가
 	void UpdateProjectiles(float dt);								// 발사체 이동, 충돌 처리, 사망 처리
 

@@ -128,11 +128,29 @@ public:
 	/** 무기 외형 적용. null 이면 맨손 **/
 	void SetWeaponVisual(const FFMWeaponVisual* Visual);
 
+	// ── 명령 수령 가능 표시 (턴테이블이 돈 유닛) ──
+	/**
+	 * 메시를 커스텀 뎁스에 그릴지 토글한다. 외곽선 자체는 포스트 프로세스 머티리얼이
+	 * 이 스텐실 값을 읽어서 그린다 — 여기서는 '표시할 대상'만 지정한다.
+	 * 매 프레임 호출되므로 값이 바뀔 때만 컴포넌트를 건드린다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Unit")
+	void SetCommandReady(bool bReady);
+
+	UFUNCTION(BlueprintPure, Category = "Unit")
+	bool IsCommandReady() const { return bCommandReady; }
+
+	/** 외곽선 포스트 프로세스가 찾는 스텐실 값. 머티리얼의 비교값과 같아야 한다 */
+	UPROPERTY(EditAnywhere, Category = "Unit")
+	int32 CommandReadyStencil = 1;
+
 	/** 왼손 — 방패(shield_l 소켓) 또는 쌍수 무기(weapon_l 소켓). 세트 무기 아이템이 채운다 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Unit")
 	TObjectPtr<UStaticMeshComponent> OffhandMesh;
 
 private:
+	bool bCommandReady = false;
+
 	void PlayOneShot(UAnimMontage* M, float Rate = 1.f);
 	
 	FVector PrevLoc = FVector::ZeroVector;   // 속도 계산용 이전 위치

@@ -6,6 +6,8 @@
 #include "Kismet/GameplayStatics.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
+#include "Engine/StaticMesh.h"
+#include "UObject/ConstructorHelpers.h"
 
 AFMWorldMapNode::AFMWorldMapNode()
 {
@@ -14,6 +16,12 @@ AFMWorldMapNode::AFMWorldMapNode()
 	Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
 	SetRootComponent(Mesh);
 	Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);   // 진입은 거리 판정으로만
+
+	// 기본 외형 — 안 넣으면 비어 있어서 엔진 기본 도형(구체/실린더)을 손으로 꽂게 된다.
+	// 인스턴스에서 다른 메시로 바꾸면 그쪽이 이긴다.
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> SignMesh(
+		TEXT("/Game/Fantastic_Village_Pack/meshes/props/deco/SM_PROP_signpost_01.SM_PROP_signpost_01"));
+	if (SignMesh.Succeeded()) Mesh->SetStaticMesh(SignMesh.Object);
 }
 
 void AFMWorldMapNode::BeginPlay()

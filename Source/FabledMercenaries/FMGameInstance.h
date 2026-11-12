@@ -87,7 +87,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	TArray<FFMItemInfo> GetInventoryItems() const;
 
-	/** 인벤토리 아이템을 용병에게 — 장비면 장착(기존 장비는 반납), 소비면 사용(포션=회복) */
+	/** 전투 중인가 — 레벨의 FMSimManager를 찾아 묻는다. 전투 밖 전용 조작을 막는 데 쓴다 */
+	UFUNCTION(BlueprintPure, Category = "Encounter")
+	bool IsCombatActive() const;
+
+	/** 인벤토리 아이템을 용병에게 — 장비면 장착(기존 장비는 반납), 소비면 사용(포션=회복). 전투 중엔 거부 */
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	bool UseItemOnMerc(int32 MercId, int32 ItemId);
 
@@ -97,7 +101,14 @@ public:
 
 	/** 카드 클릭 등으로 용병을 고름 — 캐릭터 창이 구독해서 열린다 */
 	UFUNCTION(BlueprintCallable, Category = "Roster")
-	void SelectMerc(int32 MercId) { OnMercSelected.Broadcast(MercId); }
+	void SelectMerc(int32 MercId) { ActiveMercId = MercId; OnMercSelected.Broadcast(MercId); }
+
+	/**
+	 * 지금 고른 용병 — 창들이 "누구에게 쓸 것인가"를 여기서 맞춘다.
+	 * 캐릭터 창 없이 뜨는 인벤토리 창도 이 값을 대상으로 삼는다.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Roster")
+	int32 ActiveMercId = 0;
 
 	UPROPERTY(BlueprintAssignable, Category = "Roster")
 	FFMMercSelected OnMercSelected;

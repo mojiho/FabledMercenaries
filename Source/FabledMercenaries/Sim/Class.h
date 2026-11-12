@@ -46,7 +46,8 @@ inline std::vector<Skill> GetClassSkills(Class c)
 	{
 	case Class::Warrior:  return { MakeDefense(DefenseKind::Parry, 0.50f, 0.5f), MakeCharge(0.4f, 0.2f, 1.0f, 5) };
 	case Class::Tanker:   return { MakeDefense(DefenseKind::Block, 0.70f, 2.0f), MakeDefenseStance(DefenseKind::Block, 0.85f, 1.8f) };
-	case Class::Mage:     return { MakeMagicBolt(60.f, 1.0f, 0.5f, 3.0f, 30) };  // 강한 원거리 마법: 캐스팅1s, 쿨3s, MP30
+	case Class::Mage:     return { MakeMagicBolt(60.f, 1.0f, 0.5f, 3.0f, 30),    // 강한 원거리 마법: 캐스팅1s, 쿨3s, MP30
+	                               MakeMeteor(45.f, 250.f, 1.6f, 0.6f, 8.0f, 45) };  // 범위 마법: 반경250, 캐스팅1.6s, 쿨8s, MP45
 	case Class::Archer:   return { MakeDefense(DefenseKind::Dodge, 0.40f, 1.0f) };
 	case Class::Assassin: return { MakeDefense(DefenseKind::Dodge, 0.50f, 1.0f) };
 	case Class::Healer:   return { MakeHeal(40.f, 0.8f, 0.4f, 4.0f, 25) };  // 회복40, 캐스팅0.8s, 쿨4s, MP25

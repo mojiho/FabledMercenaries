@@ -15,6 +15,11 @@ struct FSimEvent
 	int32 Param = 0;
 	bool bFromBehind = false;
 	bool bCrit = false;
+
+	// SkillCast 중 지점 지정 스킬일 때만 채워진다 — 마법이 터진 자리와 반경(폭발 연출용).
+	// 이벤트를 흘릴 때 담아 둔다: 소진 시점에는 명령이 이미 끝나 current가 비어 있을 수 있다.
+	FVector Pos = FVector::ZeroVector;
+	float   Radius = 0.f;
 };
 
 USTRUCT(BlueprintType)
@@ -30,6 +35,9 @@ struct FSkillInfo
 	UPROPERTY(BlueprintReadOnly) int32 TargetMode   = 0;
 	UPROPERTY(BlueprintReadOnly) int32 TargetFilter = 0;
 
+	/** 지점 지정 스킬의 피해 반경 (0 = 범위 피해 없음). 조준 미리보기 원의 크기 */
+	UPROPERTY(BlueprintReadOnly) float Radius = 0.f;
+
 	/**
 	 * 지금 시전 가능한가 (MP 충분 + 쿨다운 끝). false면 UI에서 버튼 비활성.
 	 * 기본값 false — FindSkillInfo가 "못 찾음"으로 빈 값을 돌려줄 때(선택 해제 등)
@@ -40,6 +48,7 @@ struct FSkillInfo
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FFMMenuCancel);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FFMCombatEnded, bool, bVictory);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FFMCombatStateChanged, bool, bNowInCombat);
 UCLASS()
 class FABLEDMERCENARIES_API AFMSimManager : public AActor
 {
@@ -112,6 +121,13 @@ public:
 	/** 스폰할 유닛 액터(BP_Unit) — 에디터에서 지정 */
 	UPROPERTY(EditAnywhere, Category = "Unit")
 	TSubclassOf<class AFMUnit> UnitClass;
+
+	/**
+	 * 이 XY 지점의 지형 높이 (UE 월드 Z).
+	 * Sim 밖에 있는 액터(배회 심볼 등)가 바닥에 붙으려면 같은 기준이 필요하다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "World")
+	float GetGroundZAt(float X, float Y) const { return GroundZAt(X, Y); }
 	
 	/** 선택 유닛의 액티브(시전 가능) 스킬 목록 */
 	UFUNCTION(BlueprintCallable, Category = "Command")
@@ -204,6 +220,13 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Encounter")
 	FFMCombatEnded OnCombatEnded;
 
+	/**
+	 * 전투 시작/종료 통지 — 전투 밖에서만 쓰는 UI(캐릭터 창·인벤토리)가 숨었다 나오는 데 쓴다.
+	 * OnCombatEnded와 달리 '시작'도 알리고 승패는 모른다.
+	 */
+	UPROPERTY(BlueprintAssignable, Category = "Encounter")
+	FFMCombatStateChanged OnCombatStateChanged;
+
 	/** 에디터에서 지정하는 디버그 인카운터 — BeginPlay에서 바로 시작할 때 쓴다 */
 	UPROPERTY(EditAnywhere, Category = "Encounter")
 	FFMEncounterDef DebugEncounter;
@@ -277,8 +300,31 @@ private:
 	struct MetaPlayer* MetaPtr() const;
 	uint64 SelectedUnitId = 0;			// 0 = 선택된 유닛 없음
 
-	// UE 바닥 높이(클릭 트레이스 Z≈210). Sim 지면(z=0)을 이 높이에 얹어서 그림
-	static constexpr float GroundZ = 210.f;
+public:
+	/**
+	 * 이 레벨의 기준 바닥 높이 (UE 월드 Z). Sim 지면(z=0)을 이 높이에 얹어서 그린다.
+	 * GroundZAt의 트레이스도 이 값을 중심으로 쏘므로, 지형이 올라가 있는 맵에서는 반드시 맞춰야 한다
+	 * (평면 테스트 맵 ≈ 210, 마을 맵 ≈ 930). 못 맞히면 유닛이 이 높이로 가라앉는다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "World")
+	float GroundZ = 210.f;
+
+	/** GroundZ 위/아래로 이 거리까지 지형을 찾는다 — 기복이 큰 맵이면 넉넉히 */
+	UPROPERTY(EditAnywhere, Category = "World")
+	float GroundTraceRange = 5000.f;
+
+	/**
+	 * 전투 중 지휘관(아바타)의 턴테이블 한 바퀴 분량. 탐험 중에는 0(턴 제한 없음)으로 두고
+	 * StartEncounter에서 이 값을 넣는다 — 월드맵 드래그 이동이 턴에 걸리면 안 되기 때문.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Combat")
+	float AvatarTurnMax = 2.0f;
+
+	/** 지휘관 턴테이블 초당 충전량 */
+	UPROPERTY(EditAnywhere, Category = "Combat")
+	float AvatarTurnRate = 1.0f;
+
+private:
 
 	bool bMenuOpen = false;	// 링 표시 숨김 여부 (UMG에서 설정)
 	
@@ -287,6 +333,31 @@ private:
 	TMap<uint64, TObjectPtr<class AFMUnit>> UnitActors;   // Sim id → 화면 액터
 
 	bool   bInCombat = false;        // 전투 중인가 (false = 탐험)
+
+	/** bInCombat을 바꾸는 유일한 통로 — 값이 실제로 바뀔 때만 OnCombatStateChanged를 쏜다 */
+	void SetCombatActive(bool bActive);
+
+	/**
+	 * 시전 중인 지점 지정 스킬의 마법진을 바닥에 그린다.
+	 * Sim 상태(current/execGauge/attackFired)만 읽어 매 프레임 다시 그리므로 수명 관리가 필요 없다 —
+	 * 명령이 시작되면 나타나고 터지는 순간 사라진다. 명령이 취소돼도 저절로 사라진다.
+	 */
+	void DrawCastCircle(const class Unit& U) const;
+
+	/** 지정한 반경의 스킬이 터진 자리에 잠깐 남는 폭발 표시 */
+	void DrawSkillBlast(const FVector& Center, float Radius) const;
+
+	/** 전투 로그에 쓸 유닛 이름 — "지휘관" / "전사 #2" / "적 궁수" */
+	FString UnitLabel(uint64 UnitId) const;
+
+	/** 채팅 서브시스템 (없을 수 있다 — GameInstance가 없는 테스트 맵 등) */
+	class UFMChatSubsystem* ChatSys() const;
+
+	/** 전투 줄기에 한 줄 */
+	void LogCombat(const FString& Text) const;
+
+	/** 시스템 줄기에 한 줄 */
+	void LogSystem(const FString& Text) const;
 	uint64 NextUnitId = 100;         // 유닛 id 발급기 (아바타는 1번대를 쓴다)
 	TArray<uint64> CombatUnitIds;    // 이번 인카운터로 스폰된 유닛 — 종료 시 이 목록만 지운다
 	TMap<uint64, uint32> UnitToMercId;   // 로스터에서 스폰된 유닛 id → 용병 id (전투 결과를 되돌려 적는 용도)

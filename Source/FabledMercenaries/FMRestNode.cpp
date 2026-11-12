@@ -6,6 +6,8 @@
 #include "Kismet/GameplayStatics.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
+#include "Engine/StaticMesh.h"
+#include "UObject/ConstructorHelpers.h"
 
 AFMRestNode::AFMRestNode()
 {
@@ -14,6 +16,11 @@ AFMRestNode::AFMRestNode()
 	Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
 	SetRootComponent(Mesh);
 	Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);   // 휴식은 거리 판정으로만
+
+	// 기본 외형 — 야영지니까 장작 쌓인 화덕. 인스턴스에서 바꾸면 그쪽이 이긴다
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> FirepitMesh(
+		TEXT("/Game/Fantastic_Village_Pack/meshes/props/deco/SM_PROP_firepit_woodpile.SM_PROP_firepit_woodpile"));
+	if (FirepitMesh.Succeeded()) Mesh->SetStaticMesh(FirepitMesh.Object);
 }
 
 void AFMRestNode::BeginPlay()

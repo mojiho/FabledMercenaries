@@ -26,6 +26,7 @@ Unit& CombatSim::AddUnit(uint64_t id, uint64_t ownerId, Faction faction, Class c
 	u.hp              = st.maxHp;   // 시작 체력 = 최대
 	u.skills          = GetClassSkills(cls);
 	u.cost            = st.cost;
+	u.turnGauge       = u.turnMax;   // 턴테이블을 채워 시작 — 전투 시작 직후 첫 명령이 바로 먹힌다
 	if (auto cit = _commanders.find(ownerId); cit != _commanders.end())
 		cit->second.usedCost += u.cost;   // 지휘관 소속이면 코스트 합산 (★ emplace 전에!)
 
@@ -137,10 +138,14 @@ CommandResult CombatSim::IssueCommand(uint64_t unitId, Command cmd, bool reserve
 	// (덕분에 반격이 플레이어 게이지를 갉아먹지 못해, 플레이어 명령이 언제나 우선)
 	if (!_aiIssuing)
 	{
+		// 이 유닛의 턴테이블이 돌아야 명령을 받는다. 수행 중인지는 보지 않는다 — 인터럽트는 허용.
+		if (!u->TurnReady()) return CommandResult::Rejected;
+
 		auto cit = _commanders.find(u->ownerId);
 		if (cit == _commanders.end() || cit->second.cmdGauge < ISSUE_COST)
 			return CommandResult::Rejected;
 		cit->second.cmdGauge -= ISSUE_COST;
+		u->turnGauge = 0.f;   // 턴 소모 — 아래 불복종으로 날아가도 소모된 것으로 친다
 
 		// Cost 초과 -> 용병 불복종 (게이지는 이미 소모됨)
 		Commander& cm = cit->second;
@@ -208,6 +213,12 @@ void CombatSim::Tick(float dt)
 	for (auto& [id, u] : _units)
 		if (u.stunRemaining > 0.f)
 			u.stunRemaining = std::max(0.f, u.stunRemaining - dt);
+
+	// 1.7) 턴테이블 충전 — 명령 수행 중인지와 무관하게 돈다.
+	// 수행 중에도 새 명령으로 끊을 수 있어야 하므로 게이지를 수행 상태에 묶지 않는다.
+	// 죽은 유닛은 돌리지 않는다(시체에 '명령 가능' 테두리가 뜨면 안 된다).
+	for (auto& [id, u] : _units)
+		u.turnGauge = u.alive ? std::min(u.turnMax, u.turnGauge + u.turnRate * dt) : 0.f;
 
 	// 2) 의사결정 — brain 있는 유닛만(AI). 사람 조종은 brain==null → 건너뜀.
 	_aiIssuing = true;                     // 이 구간의 IssueCommand는 AI 명령 → 게이지 무소모
@@ -311,6 +322,14 @@ void CombatSim::Tick(float dt)
 				if (s.category == SkillCategory::Active && s.type == want) { sk = &s; break; }
 			if (!sk) { done = true; break; }                 // 그런 액티브 스킬 없음
 
+			// 바닥을 지정하는 스킬은 시전하는 내내 그 지점을 본다
+			if (u.current.hasTargetPos)
+			{
+				Vec3 toPoint = u.current.targetPos - u.pos;
+				toPoint.z = 0.f;
+				if (toPoint.Length() > 0.f) u.facing = toPoint.Normalized();
+			}
+
 			// 선딜 완료 순간 1회 발동
 			if (!u.attackFired && u.execGauge >= sk->preDelay)
 			{
@@ -340,6 +359,12 @@ void CombatSim::Tick(float dt)
 				{
 					if (Unit* target = GetUnit(u.current.targetId))
 						SpawnProjectile(u, *target, sk->damage, false);   // 마법탄(직선), 데미지=스킬값
+				}
+				else if (sk->type == SkillType::Meteor)
+				{
+					// 지정한 바닥을 중심으로 터진다. 지정이 없으면(대상 없이 들어온 명령) 아무 일도 안 일어난다
+					if (u.current.hasTargetPos)
+						ApplyAreaDamage(u, u.current.targetPos, sk->radius, sk->damage);
 				}
 				else if (sk->type == SkillType::Defense)
 				{
@@ -471,6 +496,26 @@ bool CombatSim::ResolveHit(Unit& target, const Vec3& fromPos, float damage)
 	}
 
 	return false;
+}
+
+void CombatSim::ApplyAreaDamage(const Unit& caster, const Vec3& center, float radius, float damage)
+{
+	if (radius <= 0.f) return;
+
+	const float r2 = radius * radius;
+	for (auto& [id, t] : _units)
+	{
+		if (!t.alive)                    continue;
+		if (t.faction == caster.faction) continue;   // 아군 오사는 없다
+
+		// 높이는 보지 않는다 — Sim은 평면이고 z는 포물선 연출용이다
+		const float dx = t.pos.x - center.x;
+		const float dy = t.pos.y - center.y;
+		if (dx * dx + dy * dy > r2)      continue;
+
+		// 떨어진 자리에서 맞은 것으로 처리 — 방어/후면 판정은 일반 피격과 같은 길을 탄다
+		ResolveHit(t, center, damage);
+	}
 }
 
 void CombatSim::SpawnProjectile(Unit& owner, Unit& target, float damage, bool arc)

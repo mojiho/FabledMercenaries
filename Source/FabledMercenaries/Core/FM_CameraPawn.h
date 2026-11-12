@@ -46,7 +46,7 @@ protected:
 
 	/** 마우스 드래그 궤도 회전 감도 (마우스 1픽셀당 회전 도수) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
-	float OrbitSpeed = 0.3f;
+	float OrbitSpeed = 3.3f;
 
 	/** 궤도 회전 시 피치(위아래 각도) 제한 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
@@ -57,7 +57,17 @@ protected:
 	/** 키보드 회전 속도 (초당 도수) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
 	float KeyRotateSpeed = 90.f;
+
+	/**
+	 * 명령 수령 가능 유닛 외곽선 포스트 프로세스 (M_PP_CommandReadyOutline).
+	 * 레벨마다 PostProcessVolume을 놓는 대신 카메라에 직접 건다 — 어느 맵에서든 자동으로 먹고,
+	 * 볼륨 경계를 넘나들며 꺼지는 일이 없다. 비우면 외곽선이 안 나온다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|FX")
+	TObjectPtr<class UMaterialInterface> OutlineMaterial;
+
 public:
+	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
 
 	/** 카메라 패닝 (X/Y 이동) - WASD 축 입력용 (방향 -1~1) */

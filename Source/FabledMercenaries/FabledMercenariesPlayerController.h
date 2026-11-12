@@ -77,11 +77,22 @@ protected:
 	/** 현재 우클릭 드래그 중인지 */
 	bool bIsDragging = false;
 
-	/** 우클릭 드래그 시작 위치 (스크린 좌표) */
-	FVector2D RightPressPos = FVector2D::ZeroVector;
+	/**
+	 * 우클릭을 누른 뒤 쌓인 마우스 이동량 (픽셀).
+	 * 누른 자리와 뗀 자리를 비교하지 않는 이유: 카메라를 돌렸다가 제자리로 돌아오면 '안 움직인 것'이 되고,
+	 * 반대로 손떨림 몇 픽셀에 명령이 통째로 씹힌다. 실제로 궤도 회전을 굴린 양을 그대로 쌓는 게 정확하다.
+	 */
+	float RightDragDistance = 0.f;
 
 	UPROPERTY(EditAnywhere, Category = "Input")
-	float RightClickDragThreshold = 5.f; // 우클릭 드래그 시작 최소 이동량 (픽셀)
+	float RightClickDragThreshold = 14.f; // 이만큼 넘게 끌면 '카메라 회전'으로 보고 명령을 내지 않는다 (픽셀)
+
+	/** 점프 입력을 기억해 두는 시간 (초) — 공중일 때 눌러도 착지하면 바로 뛰게 */
+	UPROPERTY(EditAnywhere, Category = "Input")
+	float JumpBufferTime = 0.25f;
+
+	/** 남은 점프 예약 시간. 0보다 크면 매 틱 다시 시도한다 */
+	float JumpBufferLeft = 0.f;
 
 	/** True if the controlled character should navigate to the mouse cursor. */
 	uint32 bMoveToMouseCursor : 1;
@@ -116,12 +127,31 @@ protected:
 	UFUNCTION(BlueprintCallable, Category = "Command")
 	void CmdUseHealPotion();
 	
+	/** 채팅·로그 창 (WBP_Chat) — BeginPlay에서 만들어 뷰포트에 붙인다. 비우면 채팅창이 안 뜬다 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "UI")
+	TSubclassOf<class UFMChatWidget> ChatWidgetClass;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UI")
+	TObjectPtr<class UFMChatWidget> ChatWidget;
+
 public:
 
 	/** Constructor */
 	AFabledMercenariesPlayerController();
 
+	/** 채팅 입력창에 타이핑 중인가 — 키보드 조작을 흘릴지 판단 */
+	UFUNCTION(BlueprintPure, Category = "UI")
+	bool IsChatTyping() const;
+
 protected:
+
+	virtual void BeginPlay() override;
+
+	/** Enter — 채팅 입력창 열기/보내기 */
+	void OnChatToggle();
+
+	/** Esc — 입력 중이면 버리고 닫기 */
+	void OnChatCancel();
 
 	/** Initialize input bindings */
 	virtual void SetupInputComponent() override;
@@ -171,6 +201,7 @@ protected:
 	int32 PendingSkillType = 0;                 // 시전 대기 중인 스킬(Sim SkillType 값)
 	int32 PendingTargetMode = 0;                // 0=즉시 1=유닛 2=지점
 	int32 PendingTargetFilter = 0;              // 0=Any 1=Ally 2=Enemy
+	float PendingSkillRadius = 0.f;             // 지점 지정 스킬의 피해 반경 (0=범위 없음). 조준 원 크기
 	
 	// ── 월드맵 드래그 이동 ──
 	bool    bWorldDragMove     = false;                 // 월드맵에서 땅을 누른 채 끌고 있는 중

@@ -12,6 +12,22 @@
 #include "Camera/PlayerCameraManager.h"
 #include "Engine/DataTable.h"
 #include "UObject/ConstructorHelpers.h"
+#include "FMChatSubsystem.h"
+#include "Engine/GameInstance.h"
+
+/** 스킬 이름 — 링 UI와 전투 로그가 같은 표를 본다 */
+static FString SkillLabel(int32 TypeValue)
+{
+	switch ((SkillType)TypeValue)
+	{
+	case SkillType::Charge:    return TEXT("돌진");
+	case SkillType::MagicBolt: return TEXT("마법탄");
+	case SkillType::Meteor:    return TEXT("메테오");
+	case SkillType::Heal:      return TEXT("힐");
+	case SkillType::Defense:   return TEXT("방어 태세");
+	default:                   return TEXT("스킬");
+	}
+}
 
 static EUnitAnim ToAnim(ActionState s)
 {
@@ -97,7 +113,13 @@ void AFMSimManager::BeginPlay()
 		const FVector Home = GetActorLocation();
 		AvatarUnitId = SpawnSimUnit(EFMClass::Warrior, AVATAR_COMMANDER_ID, Faction::Player, FVector2D(Home.X, Home.Y));
 		if (Unit* Av = Sim.GetUnit(AvatarUnitId))
+		{
 			Av->moveSpeed = AvatarMoveSpeed;   // 직업 이속(전사 300=걷기) 대신 달리기 속도
+
+			// 탐험 중엔 턴 제한 없음. 월드맵 드래그 이동이 0.1초마다 Move 명령을 새로 넣는데
+			// 턴테이블에 걸리면 조작이 통째로 씹힌다. 전투에 들어갈 때만 켠다(StartEncounter).
+			Av->turnMax = 0.f;
+		}
 		UE_LOG(LogTemp, Warning, TEXT("[FM] 탐험 아바타 스폰 id=%llu"), AvatarUnitId);
 	}
 
@@ -122,7 +144,25 @@ void AFMSimManager::BindSimCallbacks()
 	{ PendingEvents.Add({ ESimEvt::Death, Id }); };
 
 	Sim.OnSkillCast = [this](uint64_t Id, SkillType T)
-	{ PendingEvents.Add({ ESimEvt::SkillCast, Id, (int32)T }); };
+	{
+		FSimEvent E{ ESimEvt::SkillCast, Id, (int32)T };
+
+		// 지점 지정 스킬이면 터진 자리와 반경을 지금 담아 둔다.
+		// 이벤트를 소진하는 시점에는 후딜이 짧은 명령이 이미 끝나 current가 비어 있을 수 있다.
+		if (const Unit* U = Sim.GetUnit(Id))
+		{
+			if (U->current.hasTargetPos)
+			{
+				for (const Skill& S : U->skills)
+					if (S.category == SkillCategory::Active && S.type == T) { E.Radius = S.radius; break; }
+
+				if (E.Radius > 0.f)
+					E.Pos = FVector(U->current.targetPos.x, U->current.targetPos.y,
+						GroundZAt(U->current.targetPos.x, U->current.targetPos.y));
+			}
+		}
+		PendingEvents.Add(E);
+	};
 
 	Sim.OnCommandComplete = [this](uint64_t Id, uint32_t Slot)
 	{ PendingEvents.Add({ ESimEvt::CmdComplete, Id, (int32)Slot }); };
@@ -140,8 +180,15 @@ void AFMSimManager::DrainSimEvents()
 		{
 		case ESimEvt::AttackFired: A->NotifyAttackFired();                    break;
 		case ESimEvt::Damaged:     A->NotifyDamaged(E.bFromBehind, E.bCrit);  break;
-		case ESimEvt::Death:       A->NotifyDeath();                          break;
-		case ESimEvt::SkillCast:   A->NotifySkillCast(E.Param);               break;
+		case ESimEvt::Death:
+			A->NotifyDeath();
+			LogCombat(FString::Printf(TEXT("%s 쓰러짐"), *UnitLabel(E.UnitId)));
+			break;
+		case ESimEvt::SkillCast:
+			A->NotifySkillCast(E.Param);
+			if (E.Radius > 0.f) DrawSkillBlast(E.Pos, E.Radius);   // 범위 마법이 터진 자리
+			LogCombat(FString::Printf(TEXT("%s — %s"), *UnitLabel(E.UnitId), *SkillLabel(E.Param)));
+			break;
 		case ESimEvt::CmdComplete: /* 지금은 무시 (나중에 UI 피드백) */       break;
 		}
 	}
@@ -285,12 +332,19 @@ void AFMSimManager::StartEncounter(const FFMEncounterDef& Def, const FVector& Ce
 		return FVector2D(P.X, P.Y);
 	};
 
+	// 아바타(지휘관)도 아군 줄에 같이 선다. 조우 지점에 그대로 두면 혼자 진형 앞에 튀어나온 채로
+	// 전투가 시작되고, 등장 연출에서도 혼자 제자리에 남아 합류하는 느낌이 나지 않는다.
+	// 아바타가 줄의 0번 자리를 쓰므로 용병들은 한 칸씩 밀린다 — 줄 전체는 그대로 가운데 정렬.
+	const bool  bHasAvatar  = (AvatarUnitId != 0) && (Sim.GetUnit(AvatarUnitId) != nullptr);
+	const int32 AvatarSlots = bHasAvatar ? 1 : 0;
+
 	// 아군 — 용병 로스터가 우선. Def.Allies는 로스터가 없을 때(GameInstance 미지정 등)만 쓴다.
 	int32 AllyCount = 0, AliveAllyCount = 0;
 	MetaPlayer* MP = MetaPtr();
 	if (MP && !MP->roster.empty())
 	{
-		const int32 N = (int32)MP->roster.size();
+		const int32 N    = (int32)MP->roster.size();
+		const int32 Line = N + AvatarSlots;   // 줄 전체 인원(아바타 포함)
 		for (int32 i = 0; i < N; ++i)
 		{
 			const Mercenary& M = MP->roster[i];
@@ -298,7 +352,7 @@ void AFMSimManager::StartEncounter(const FFMEncounterDef& Def, const FVector& Ce
 			// 로스터엔 진형 정보가 없으므로 가운데 정렬로 한 줄로 세운다
 			FFMUnitSpawn S;
 			S.UnitClass = FromSimClass(M.unitClass);
-			S.Offset    = FVector2D(0.f, (i - (N - 1) * 0.5f) * 100.f);
+			S.Offset    = FVector2D(0.f, (i + AvatarSlots - (Line - 1) * 0.5f) * 100.f);
 
 			const uint64 Id = SpawnSimUnit(S.UnitClass, 1, Faction::Player, Place(AllyBase, Fwd, S));
 			CombatUnitIds.Add(Id);
@@ -340,13 +394,37 @@ void AFMSimManager::StartEncounter(const FFMEncounterDef& Def, const FVector& Ce
 		AllyCount = AliveAllyCount = Def.Allies.Num();
 	}
 
+	// 아바타를 줄 왼쪽 끝(0번 자리)으로 옮긴다. CombatUnitIds에는 넣지 않는다 —
+	// 거기 들어간 유닛은 EndEncounter가 Sim과 액터를 통째로 지우므로 아바타가 사라진다.
+	if (bHasAvatar)
+	{
+		const int32 Line = AllyCount + AvatarSlots;
+		FFMUnitSpawn S;
+		S.Offset = FVector2D(0.f, (0 - (Line - 1) * 0.5f) * 100.f);
+		const FVector2D P = Place(AllyBase, Fwd, S);
+
+		SetAvatarWorldPos(FVector(P.X, P.Y, 0.f));   // 이동 명령·예약도 같이 비운다
+		if (Unit* Av = Sim.GetUnit(AvatarUnitId))
+		{
+			Av->facing = Vec3{ (float)Fwd.X, (float)Fwd.Y, 0.f };   // 적 쪽을 보고 선다
+
+			// 전투 중엔 지휘관도 턴테이블을 탄다 — 용병과 같은 규칙. 가득 채워 시작한다.
+			Av->turnMax   = AvatarTurnMax;
+			Av->turnRate  = AvatarTurnRate;
+			Av->turnGauge = Av->turnMax;
+		}
+	}
+
 	for (const FFMUnitSpawn& S : Def.Enemies)
 		CombatUnitIds.Add(SpawnSimUnit(S.UnitClass, ENEMY_COMMANDER_ID, Faction::Hostile, Place(EnemyBase, -Fwd, S)));
 
-	bInCombat = true;
+	SetCombatActive(true);
 
 	UE_LOG(LogTemp, Warning, TEXT("[FM] 인카운터 시작 '%s' — 아군 %d기(생존 %d), 적 %d기 (중점 %s)"),
 		*Def.EncounterId.ToString(), AllyCount, AliveAllyCount, Def.Enemies.Num(), *Center.ToCompactString());
+
+	LogSystem(FString::Printf(TEXT("전투 시작 — 아군 %d기(생존 %d) 대 적 %d기"),
+		AllyCount, AliveAllyCount, Def.Enemies.Num()));
 }
 
 void AFMSimManager::RequestEncounter(const FFMEncounterDef& Def, const FVector& Center, const FVector& FacingDir, AActor* Symbol)
@@ -389,19 +467,23 @@ void AFMSimManager::OnEncounterFadedOut()
 	if (Fwd.IsNearlyZero()) Fwd = FVector::ForwardVector;
 
 	float MaxDelay = 0.f;
-	for (uint64 Id : CombatUnitIds)
+	auto RunIn = [&](uint64 Id)
 	{
 		const Unit* U = Sim.GetUnit(Id);
 		TObjectPtr<AFMUnit>* Found = UnitActors.Find(Id);
 		AFMUnit* A = Found ? Found->Get() : nullptr;
-		if (!U || !A) continue;
+		if (!U || !A) return;
 
 		const FVector Back  = (U->faction == Faction::Hostile) ? Fwd : -Fwd;
 		const float   Delay = FMath::FRandRange(0.f, IntroStagger);
 		// 시체로 스폰된 용병은 달려오지 않고 제자리에서 나타나기만
 		A->PlayEntrance(U->alive ? Back * IntroEntryDistance : FVector::ZeroVector, IntroRunTime, Delay);
 		MaxDelay = FMath::Max(MaxDelay, Delay);
-	}
+	};
+
+	for (uint64 Id : CombatUnitIds) RunIn(Id);
+	// 아바타(지휘관)도 같이 달려 들어온다. CombatUnitIds에 없으므로 따로 불러준다
+	if (AvatarUnitId != 0) RunIn(AvatarUnitId);
 	IntroEndTime = GetWorld()->GetTimeSeconds() + MaxDelay + IntroRunTime;
 
 	if (APlayerCameraManager* Cam = UGameplayStatics::GetPlayerCameraManager(this, 0))
@@ -450,12 +532,27 @@ void AFMSimManager::EndEncounter()
 	// 사라진 유닛을 가리키는 이벤트가 다음 프레임에 소진되면 안 된다
 	PendingEvents.Reset();
 
+	// 탐험 복귀 — 아바타 턴 제한 해제. 안 풀면 월드맵 드래그 이동이 씹힌다
+	if (Unit* Av = Sim.GetUnit(AvatarUnitId))
+	{
+		Av->turnMax   = 0.f;
+		Av->turnGauge = 0.f;
+	}
+
 	SelectedUnitId = 0;
 	bTargeting     = false;
 	bMenuOpen      = false;
-	bInCombat      = false;
+	SetCombatActive(false);
 
 	UE_LOG(LogTemp, Warning, TEXT("[FM] 인카운터 종료 — 탐험 상태로 복귀"));
+	LogSystem(TEXT("전투 종료 — 탐험으로 돌아갑니다"));
+}
+
+void AFMSimManager::SetCombatActive(bool bActive)
+{
+	if (bInCombat == bActive) return;
+	bInCombat = bActive;
+	OnCombatStateChanged.Broadcast(bInCombat);
 }
 
 void AFMSimManager::CheckCombatResolution()
@@ -480,6 +577,7 @@ void AFMSimManager::CheckCombatResolution()
 
 	const bool bVictory = !bAnyEnemy;
 	UE_LOG(LogTemp, Warning, TEXT("[FM] 전투 종료 — %s"), bVictory ? TEXT("승리") : TEXT("패배"));
+	LogSystem(bVictory ? TEXT("승리했습니다") : TEXT("패배했습니다"));
 
 	EndEncounter();
 	OnCombatEnded.Broadcast(bVictory);   // 정리 후에 알린다 — 구독자가 바로 다음 인카운터를 걸 수 있게
@@ -508,6 +606,21 @@ void AFMSimManager::Tick(float DeltaSeconds)
 	if (AvBefore) BlockAvatarAtLedges(AvPrevX, AvPrevY);
 	DrainSimEvents();
 	CheckCombatResolution();   // 이벤트 소진 뒤에 — 액터를 파괴하기 전에 알림이 먼저 나가야 한다
+	// HP/MP 바를 카메라 쪽으로 세워 두기 위한 기준 축 (빌보드).
+	// 월드 축에 고정해 그리면 카메라를 QE로 돌릴 때 바가 같이 돌아서 비스듬하거나 선으로 보인다.
+	// 루프 밖에서 한 번만 구한다 — 유닛마다 같은 값이다.
+	FVector CamRight(0.f, 1.f, 0.f);
+	FVector CamUp(0.f, 0.f, 1.f);
+	if (const APlayerController* PC = GetWorld()->GetFirstPlayerController())
+	{
+		if (const APlayerCameraManager* Cam = PC->PlayerCameraManager)
+		{
+			const FRotationMatrix CamBasis(Cam->GetCameraRotation());
+			CamRight = CamBasis.GetUnitAxis(EAxis::Y);
+			CamUp    = CamBasis.GetUnitAxis(EAxis::Z);
+		}
+	}
+
 	// 디버그용 : 모든 유닛 위치 표시
 	for (const auto& Pair : Sim.Units())
 	{
@@ -521,6 +634,10 @@ void AFMSimManager::Tick(float DeltaSeconds)
 			FVector FloorLoc(U.pos.x, U.pos.y, GroundZAt(U.pos.x + Off.X, U.pos.y + Off.Y));
 			FVector FacingDir(U.facing.x, U.facing.y, 0.f);
 			(*Found)->UpdateFromSim(FloorLoc, FacingDir, ToAnim(U.GetActionState()), DeltaSeconds);
+
+			// 턴테이블이 돈 아군만 외곽선. 탐험 중(turnMax==0)에는 늘 명령 가능하므로 표시하지 않는다
+			(*Found)->SetCommandReady(bInCombat && U.alive && U.turnMax > 0.f
+				&& U.faction == Faction::Player && U.TurnReady());
 
 			// 등장 연출로 달려오는 중엔 발밑 링/HP바를 그리지 않는다 — Sim 자리(진형)에 빈 링이 먼저 떠 보이므로
 			if (!(*Found)->GetEntranceOffset().IsNearlyZero()) continue;
@@ -539,26 +656,48 @@ void AFMSimManager::Tick(float DeltaSeconds)
 		DrawDebugCircle(GetWorld(), Feet, 55.f, 32, RingCol, false, -1.f, 0, Thick,
 			FVector(1, 0, 0), FVector(0, 1, 0), false);   // XY 평면(바닥에 눕힘)
 		
-		// 바라보는 방향 화살표 (도착 방향 확인용)
-		FVector F(U.facing.x, U.facing.y, 0.f);
-		if (!F.IsNearlyZero())
-			DrawDebugDirectionalArrow(GetWorld(), Loc, Loc + F.GetSafeNormal() * 60.f,
-				60.f, FColor::Yellow, false, -1.f, 0, 3.f);
+		// 바라보는 방향 화살표 — 전투 중에만. 도착 방향을 확인하려고 두는 것이라
+		// 월드맵·탐험맵에서는 아바타 혼자 노란 화살표를 달고 다녀서 거슬린다.
+		if (bInCombat)
+		{
+			FVector F(U.facing.x, U.facing.y, 0.f);
+			if (!F.IsNearlyZero())
+				DrawDebugDirectionalArrow(GetWorld(), Loc, Loc + F.GetSafeNormal() * 60.f,
+					60.f, FColor::Yellow, false, -1.f, 0, 3.f);
+		}
 		
-		// HP 바 (구체 위, 월드 Y축 방향)
+		DrawCastCircle(U);   // 범위 마법 시전 중이면 지정한 바닥에 마법진
+
+		// HP/MP 바 — 발밑 링 아래(화면 기준)에 깐다.
+		// 길이 방향은 CamRight, 위아래 간격은 CamUp — 둘 다 카메라를 따라가므로 카메라를 돌려도
+		// 화면에서는 늘 가로로 눕고 간격도 그대로다.
+		// SDPG_Foreground로 그린다: 그냥 그리면 제 몸이나 앞 유닛, 지형 턱에 가려 안 보인다.
 		const float BarW = 80.f;
+		const FVector BarPos = Feet - CamUp * 45.f;    // 링 바로 아래
+		const FVector MpBase = Feet - CamUp * 58.f;    // HP 바 아래
+
 		const float Ratio = FMath::Clamp(U.hp / U.maxHp, 0.f, 1.f);
-		const FVector BarPos = Loc + FVector(0, 0, 70.f);          // 구체 위
-		const FVector Left  = BarPos - FVector(0, BarW * 0.5f, 0);
-		const FVector Right = BarPos + FVector(0, BarW * 0.5f, 0);
-		const FVector Fill  = Left + FVector(0, BarW * Ratio, 0);
-		DrawDebugLine(GetWorld(), Left, Right, FColor(40, 40, 40), false, -1.f, 0, 6.f);  // 배경(빈 체력)
-		DrawDebugLine(GetWorld(), Left, Fill,  FColor::Green,      false, -1.f, 0, 6.f);  // 현재 체력
-		
+		const FVector Left  = BarPos - CamRight * (BarW * 0.5f);
+		const FVector Fill  = Left + CamRight * (BarW * Ratio);
+		DrawDebugLine(GetWorld(), Left, BarPos + CamRight * (BarW * 0.5f), FColor(40, 40, 40), false, -1.f, SDPG_Foreground, 6.f);  // 배경(빈 체력)
+		DrawDebugLine(GetWorld(), Left, Fill,                              FColor::Green,      false, -1.f, SDPG_Foreground, 6.f);  // 현재 체력
+
 		const float MpRatio = (U.mpMax > 0.f) ? FMath::Clamp(U.mp / U.mpMax, 0.f, 1.f) : 0.f;
-		const FVector MpBase = Loc + FVector(0, 0, 60.f);   // HP바(70)보다 살짝 아래
-		DrawDebugLine(GetWorld(), MpBase - FVector(0, BarW*0.5f, 0), MpBase + FVector(0, BarW*0.5f, 0), FColor(30,30,60), false, -1.f, 0, 5.f);
-		DrawDebugLine(GetWorld(), MpBase - FVector(0, BarW*0.5f, 0), MpBase - FVector(0, BarW*0.5f, 0) + FVector(0, BarW*MpRatio, 0), FColor::Blue, false, -1.f, 0, 5.f);
+		const FVector MpLeft = MpBase - CamRight * (BarW * 0.5f);
+		DrawDebugLine(GetWorld(), MpLeft, MpBase + CamRight * (BarW * 0.5f),      FColor(30,30,60), false, -1.f, SDPG_Foreground, 5.f);
+		DrawDebugLine(GetWorld(), MpLeft, MpLeft + CamRight * (BarW * MpRatio),   FColor::Blue,     false, -1.f, SDPG_Foreground, 5.f);
+
+		// 턴 게이지 — MP 바 아래. 가득 차면(= 명령 수령 가능) 금색, 차는 중엔 흐린 회색.
+		// 턴 제한이 없는 유닛(탐험 중 아바타)은 늘 가득이라 바를 그리지 않는다
+		if (U.turnMax > 0.f)
+		{
+			const bool    bReady  = U.TurnReady();
+			const FVector TurnBase = MpBase - CamUp * 11.f;
+			const FVector TurnLeft = TurnBase - CamRight * (BarW * 0.5f);
+			DrawDebugLine(GetWorld(), TurnLeft, TurnBase + CamRight * (BarW * 0.5f), FColor(45,40,25), false, -1.f, SDPG_Foreground, 5.f);
+			DrawDebugLine(GetWorld(), TurnLeft, TurnLeft + CamRight * (BarW * U.TurnRatio()),
+				bReady ? FColor(255, 215, 70) : FColor(130, 115, 60), false, -1.f, SDPG_Foreground, 5.f);
+		}
 
 	}
 
@@ -644,11 +783,101 @@ void AFMSimManager::MoveSelectedTo(const FVector& WorldPos)
 	}
 }
 
+UFMChatSubsystem* AFMSimManager::ChatSys() const
+{
+	const UGameInstance* GI = GetGameInstance();
+	return GI ? GI->GetSubsystem<UFMChatSubsystem>() : nullptr;
+}
+
+void AFMSimManager::LogCombat(const FString& Text) const
+{
+	if (UFMChatSubsystem* C = ChatSys()) C->PostCombat(Text);
+}
+
+void AFMSimManager::LogSystem(const FString& Text) const
+{
+	if (UFMChatSubsystem* C = ChatSys()) C->PostSystem(Text);
+}
+
+FString AFMSimManager::UnitLabel(uint64 UnitId) const
+{
+	if (UnitId == AvatarUnitId) return TEXT("지휘관");
+
+	auto It = Sim.Units().find(UnitId);
+	if (It == Sim.Units().end()) return TEXT("?");
+
+	const TCHAR* Cls = FMClassLabel(It->second.unitClass);
+
+	// 내 용병이면 로스터 번호를 붙여 누가 누군지 가린다 (같은 직업이 여럿일 수 있다)
+	if (const uint32* MercId = UnitToMercId.Find(UnitId))
+		return FString::Printf(TEXT("%s #%u"), Cls, *MercId);
+
+	return (It->second.faction == Faction::Hostile)
+		? FString::Printf(TEXT("적 %s"), Cls)
+		: FString(Cls);
+}
+
+void AFMSimManager::DrawCastCircle(const Unit& U) const
+{
+	if (!U.executing || U.attackFired) return;                                  // 아직 시전 중일 때만
+	if (U.current.type != CommandType::Skill || !U.current.hasTargetPos) return;
+
+	const SkillType Want = (SkillType)U.current.skillId;
+	const Skill* Sk = nullptr;
+	for (const Skill& S : U.skills)
+		if (S.category == SkillCategory::Active && S.type == Want) { Sk = &S; break; }
+	if (!Sk || Sk->radius <= 0.f) return;   // 범위 없는 지점 스킬이면 마법진도 없다
+
+	const float CX = U.current.targetPos.x;
+	const float CY = U.current.targetPos.y;
+	const FVector C(CX, CY, GroundZAt(CX, CY) + 6.f);
+
+	// 안쪽 원이 바깥까지 차오르면 발동 — 남은 시전 시간이 눈으로 보인다
+	const float Progress = (Sk->preDelay > 0.f)
+		? FMath::Clamp(U.execGauge / Sk->preDelay, 0.f, 1.f) : 1.f;
+
+	const FColor Rim  = FColor(170, 90, 255);   // 보라 — 실제 피해 범위
+	const FColor Fill = FColor(255, 150, 50);   // 주황 — 차오르는 시전 게이지
+
+	DrawDebugCircle(GetWorld(), C, Sk->radius, 48, Rim, false, -1.f, SDPG_World, 4.f,
+		FVector(1, 0, 0), FVector(0, 1, 0), false);
+	DrawDebugCircle(GetWorld(), C, Sk->radius * Progress, 48, Fill, false, -1.f, SDPG_World, 3.f,
+		FVector(1, 0, 0), FVector(0, 1, 0), false);
+
+	// 마법진 살 — 바깥 테두리로 뻗는 선 8개
+	for (int32 i = 0; i < 8; ++i)
+	{
+		const float A = (2.f * PI * i) / 8.f;
+		const FVector D(FMath::Cos(A), FMath::Sin(A), 0.f);
+		DrawDebugLine(GetWorld(), C + D * (Sk->radius * 0.55f), C + D * Sk->radius,
+			Rim, false, -1.f, SDPG_World, 2.f);
+	}
+
+	// 누가 시전하고 있는지 — 시전자에서 마법진으로 잇는 선
+	DrawDebugLine(GetWorld(), FVector(U.pos.x, U.pos.y, GroundZAt(U.pos.x, U.pos.y) + 60.f), C,
+		Rim, false, -1.f, SDPG_World, 1.5f);
+}
+
+void AFMSimManager::DrawSkillBlast(const FVector& Center, float Radius) const
+{
+	if (Radius <= 0.f) return;
+
+	const float   Life = 0.45f;   // 디버그 드로우가 알아서 지워준다 — 따로 치울 필요 없음
+	const FVector C    = Center + FVector(0, 0, 8.f);
+
+	DrawDebugCircle(GetWorld(), C, Radius, 48, FColor(255, 170, 60), false, Life, SDPG_World, 8.f,
+		FVector(1, 0, 0), FVector(0, 1, 0), false);
+	DrawDebugCircle(GetWorld(), C, Radius * 0.6f, 40, FColor(255, 240, 150), false, Life, SDPG_World, 5.f,
+		FVector(1, 0, 0), FVector(0, 1, 0), false);
+	DrawDebugSphere(GetWorld(), Center + FVector(0, 0, Radius * 0.35f), Radius * 0.5f, 16,
+		FColor(255, 120, 40), false, Life, SDPG_World, 3.f);
+}
+
 float AFMSimManager::GroundZAt(float X, float Y) const
 {
 	FHitResult Hit;
-	const FVector From(X, Y, GroundZ + 1000.f);
-	const FVector To  (X, Y, GroundZ - 2000.f);
+	const FVector From(X, Y, GroundZ + GroundTraceRange);
+	const FVector To  (X, Y, GroundZ - GroundTraceRange);
 	if (GetWorld()->LineTraceSingleByChannel(Hit, From, To, ECC_Visibility))
 		return Hit.Location.Z;
 	return GroundZ;   // 못 찾으면 기본 바닥
@@ -841,16 +1070,10 @@ TArray<FSkillInfo> AFMSimManager::GetSelectedUnitSkills() const
 		Info.CdRemaining = s.cdRemaining;
 		Info.TargetMode   = (int32)s.targetMode;
 		Info.TargetFilter = (int32)s.targetFilter;
+		Info.Radius       = s.radius;
 		// MP 부족하거나 쿨다운 중이면 시전 불가 → UI가 버튼을 회색으로
 		Info.bCanCast     = (It->second.mp >= (float)s.mpCost) && (s.cdRemaining <= 0.f);
-		switch (s.type)
-		{
-		case SkillType::Charge:    Info.Name = TEXT("돌진");     break;
-		case SkillType::MagicBolt: Info.Name = TEXT("마법탄");   break;
-		case SkillType::Heal:      Info.Name = TEXT("힐");       break;
-		case SkillType::Defense:   Info.Name = TEXT("방어 태세"); break;
-		default:                   Info.Name = TEXT("스킬");     break;
-		}
+		Info.Name = SkillLabel((int32)s.type);
 		Out.Add(Info);
 	}
 	return Out;

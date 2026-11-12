@@ -51,16 +51,43 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Debug")
 	bool bDrawDebugRadius = true;
 
+	/**
+	 * 배회할 때 보여줄 걸어다니는 아바타. 비우면 SimManager의 UnitClass(BP_Unit)를 쓴다.
+	 * 아바타가 뜨면 아래 Mesh(구체)는 자동으로 숨는다 — 클래스를 못 찾으면 구체로 남는다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Avatar")
+	TSubclassOf<class AFMUnit> AvatarClass;
+
+	/** 아바타를 쓰지 않고 예전처럼 메시만 보여주고 싶을 때 */
+	UPROPERTY(EditAnywhere, Category = "Avatar")
+	bool bUseAvatar = true;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<class UStaticMeshComponent> Mesh;
 
+	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
+
 private:
+	void SpawnAvatar();
+
+	/** 아바타를 지금 심볼 위치·방향으로 갱신. 지형 높이는 SimManager에서 받아 쓴다 */
+	void UpdateAvatar(float DeltaSeconds, bool bMoving);
+
+	/** 배회/추격으로 실제 보여줄 아바타 액터 (심볼에 붙이지 않고 따로 띄운다 — 위치를 직접 넣어주므로) */
+	UPROPERTY(Transient)
+	TObjectPtr<class AFMUnit> Avatar;
+
+	/** 아바타가 바라볼 방향 (마지막으로 움직인 쪽) */
+	FVector AvatarFacing = FVector::ForwardVector;
+
 	/** SimManager의 OnCombatEnded 구독 — 내가 연 전투일 때만 반응한다 */
 	UFUNCTION()
 	void HandleCombatEnded(bool bVictory);
 
 	void PickPatrolTarget();
-	void MoveTowardXY(const FVector& Target, float DeltaSeconds);
+
+	/** @return 실제로 움직였으면 true (걷기 애니를 켤지 판단) */
+	bool MoveTowardXY(const FVector& Target, float DeltaSeconds);
 
 	TWeakObjectPtr<class AFMSimManager> Mgr;
 

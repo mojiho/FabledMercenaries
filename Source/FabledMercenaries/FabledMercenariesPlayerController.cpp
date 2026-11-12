@@ -20,6 +20,9 @@
 #include "Core/FM_CameraPawn.h"
 #include "Engine/Engine.h"
 #include "Kismet/GameplayStatics.h"
+#include "FMChatWidget.h"
+#include "FMChatSubsystem.h"
+#include "Engine/GameInstance.h"
 
 AFabledMercenariesPlayerController::AFabledMercenariesPlayerController()
 {
@@ -36,6 +39,36 @@ AFabledMercenariesPlayerController::AFabledMercenariesPlayerController()
 	FollowTime = 0.f;
 }
 
+void AFabledMercenariesPlayerController::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// 채팅창은 WBP_WorldHUD 안에 넣지 않는다 — HUD는 전투에 들어가면 통째로 숨는데,
+	// 전투 로그는 그때 제일 필요하다. 그래서 뷰포트에 따로 올린다.
+	if (ChatWidgetClass && !ChatWidget)
+	{
+		ChatWidget = CreateWidget<UFMChatWidget>(this, ChatWidgetClass);
+		if (ChatWidget) ChatWidget->AddToViewport(10);   // HUD(기본 0) 위
+	}
+}
+
+bool AFabledMercenariesPlayerController::IsChatTyping() const
+{
+	const UGameInstance* GI = GetGameInstance();
+	const UFMChatSubsystem* C = GI ? GI->GetSubsystem<UFMChatSubsystem>() : nullptr;
+	return C && C->IsTyping();
+}
+
+void AFabledMercenariesPlayerController::OnChatToggle()
+{
+	if (ChatWidget) ChatWidget->ToggleTyping();
+}
+
+void AFabledMercenariesPlayerController::OnChatCancel()
+{
+	if (ChatWidget && ChatWidget->IsTyping()) ChatWidget->EndTyping(false);
+}
+
 void AFabledMercenariesPlayerController::SetupInputComponent()
 {
 	// set up gameplay key bindings
@@ -48,6 +81,12 @@ void AFabledMercenariesPlayerController::SetupInputComponent()
 
 	InputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &AFabledMercenariesPlayerController::OnRightClickPressed);
 	InputComponent->BindKey(EKeys::RightMouseButton, IE_Released, this, &AFabledMercenariesPlayerController::OnRightClickReleased);
+
+	// 채팅 — Enhanced Input 액션을 따로 만들지 않고 키를 직접 묶는다(마우스와 같은 방식).
+	// 입력 중에는 텍스트 상자가 포커스를 쥐고 Enter를 먹으므로 여기로 오지 않는다.
+	// 숫자패드 Enter는 따로 없다 — 언리얼이 둘 다 EKeys::Enter로 넘긴다
+	InputComponent->BindKey(EKeys::Enter,  IE_Pressed, this, &AFabledMercenariesPlayerController::OnChatToggle);
+	InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &AFabledMercenariesPlayerController::OnChatCancel);
 
 	//InputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &AFabledMercenariesPlayerController::OnRightClickCommand);
 
@@ -215,6 +254,7 @@ void AFabledMercenariesPlayerController::ChooseSkill(int32 SkillType)
 	PendingSkillType = SkillType;
 	PendingTargetMode = Info.TargetMode;
 	PendingTargetFilter = Info.TargetFilter;
+	PendingSkillRadius = Info.Radius;   // 범위 마법이면 조준 미리보기 원을 실제 피해 범위로 그린다
 	Mgr->SetTargeting(true);	// 링 숨김 (선택은 유지 → 어느 유닛이 시전할지 앎)
 	Mgr->CancelMenu();			// 목록 창 닫기 (대상 클릭을 가리지 않게)
 }
@@ -291,6 +331,8 @@ void AFabledMercenariesPlayerController::OnZoom(const FInputActionValue& Value)
 
 void AFabledMercenariesPlayerController::OnCameraMove(const FInputActionValue& Value)
 {
+	if (IsChatTyping()) return;                            // 채팅 입력 중 — WASD는 글자다
+
 	FVector2D Axis = Value.Get<FVector2D>();               // WASD → (X=좌우, Y=앞뒤)
 	if (AFM_CameraPawn* Cam = Cast<AFM_CameraPawn>(GetPawn()))
 		Cam->MoveCamera(Axis);
@@ -298,6 +340,8 @@ void AFabledMercenariesPlayerController::OnCameraMove(const FInputActionValue& V
 
 void AFabledMercenariesPlayerController::OnCameraRotate(const FInputActionValue& Value)
 {
+	if (IsChatTyping()) return;                            // 채팅 입력 중 — QE는 글자다
+
 	float Axis = Value.Get<float>();                       // QE → (-1 / +1)
 	if (AFM_CameraPawn* Cam = Cast<AFM_CameraPawn>(GetPawn()))
 		Cam->RotateCamera(Axis);
@@ -320,6 +364,9 @@ void AFabledMercenariesPlayerController::OnDragMove(const FInputActionValue& Val
 
 	// Value.Get<FVector2D>() : 마우스 X/Y 이동량 (이번 프레임 델타)
 	FVector2D Delta = Value.Get<FVector2D>();
+
+	// 뗐을 때 '클릭이었나 드래그였나'를 가르는 기준 — 실제로 돌린 양을 쌓는다
+	RightDragDistance += Delta.Size();
 
 	// 카메라 폰을 중심점 축으로 궤도 회전 (스케일은 폰의 OrbitSpeed가 담당)
 	if (AFM_CameraPawn* Cam = Cast<AFM_CameraPawn>(GetPawn()))
@@ -351,19 +398,13 @@ void AFabledMercenariesPlayerController::UpdateCachedDestination()
 
 void AFabledMercenariesPlayerController::OnRightClickPressed()
 {
-	float X, Y;
-	if (GetMousePosition(X, Y))
-	{
-		RightPressPos = FVector2D(X, Y);
-	}
+	RightDragDistance = 0.f;
 }
 
 void AFabledMercenariesPlayerController::OnRightClickReleased()
 {
-	float X, Y;
-	if (!GetMousePosition(X, Y)) return;
-
-	if (FVector2D::Distance(RightPressPos, FVector2D(X, Y)) > RightClickDragThreshold) return;
+	// 카메라를 돌린 거라면 명령이 아니다
+	if (RightDragDistance > RightClickDragThreshold) return;
 
 	OnRightClickCommand();
 }
@@ -387,7 +428,8 @@ void AFabledMercenariesPlayerController::OnRightClickCommand()
 	// (누를 때가 아니라 '끌지 않고 뗐을 때' 들어온다 — 우클릭 드래그는 카메라 회전이라서)
 	if (Mgr && (Mgr->bIsWorldMap || !Mgr->IsInCombat()))
 	{
-		Mgr->JumpAvatar();
+		// 공중이면 지금은 못 뛴다 — 버리지 말고 잠깐 기억했다가 착지하는 순간 뛴다
+		if (!Mgr->JumpAvatar()) JumpBufferLeft = JumpBufferTime;
 		return;
 	}
 
@@ -447,6 +489,16 @@ void AFabledMercenariesPlayerController::PlayerTick(float DeltaTime)
     if (AFMSimManager* SelMgr = Cast<AFMSimManager>(
         UGameplayStatics::GetActorOfClass(GetWorld(), AFMSimManager::StaticClass())))
     {
+        // 예약해 둔 점프 — 착지하는 프레임에 바로 나간다.
+        // 예약해 둔 사이에 전투가 시작됐을 수도 있으므로 조건은 다시 본다
+        if (JumpBufferLeft > 0.f)
+        {
+            JumpBufferLeft -= DeltaTime;
+            const bool bCanJump = !SelMgr->IsEncounterIntroPlaying()
+                && (SelMgr->bIsWorldMap || !SelMgr->IsInCombat());
+            if (!bCanJump || SelMgr->JumpAvatar()) JumpBufferLeft = 0.f;
+        }
+
         FVector SelPos = FVector::ZeroVector;
         const bool bFollowSelected = SelMgr->HasSelectedUnit() && SelMgr->GetSelectedUnitWorldPos(SelPos);
         const bool bFollowAvatar   = !bFollowSelected
@@ -482,8 +534,9 @@ void AFabledMercenariesPlayerController::PlayerTick(float DeltaTime)
 
             const FColor Col = bValid ? FColor(80, 255, 120) : FColor(255, 190, 60);
 
-            // 조준 커서 (이중 원)
-            DrawDebugCircle(GetWorld(), Ground, 70.f, 32, Col, false, -1.f, 0, 3.f,
+            // 조준 커서 (이중 원). 범위 마법이면 바깥 원이 곧 피해 범위 — 어디까지 맞는지 보고 찍는다
+            const float OuterR = (bPointMode && PendingSkillRadius > 0.f) ? PendingSkillRadius : 70.f;
+            DrawDebugCircle(GetWorld(), Ground, OuterR, 48, Col, false, -1.f, 0, 3.f,
                 FVector(1, 0, 0), FVector(0, 1, 0), false);
             DrawDebugCircle(GetWorld(), Ground, 25.f, 24, Col, false, -1.f, 0, 2.f,
                 FVector(1, 0, 0), FVector(0, 1, 0), false);

@@ -35,6 +35,24 @@ FORCEINLINE Class ToSimClass(EFMClass C) { return (Class)(uint8)C; }
 /** Sim Class → EFMClass (용병 로스터에서 스폰할 때) */
 FORCEINLINE EFMClass FromSimClass(Class C) { return (EFMClass)(uint8)C; }
 
+/**
+ * 직업 이름. 로스터 UI와 전투 로그가 같은 표를 보도록 여기 한 곳에만 둔다.
+ * (Sim의 Class를 그대로 받으므로 양쪽에서 변환 없이 쓴다)
+ */
+FORCEINLINE const TCHAR* FMClassLabel(Class C)
+{
+	switch (C)
+	{
+	case Class::Warrior:  return TEXT("전사");
+	case Class::Tanker:   return TEXT("탱커");
+	case Class::Mage:     return TEXT("마법사");
+	case Class::Archer:   return TEXT("궁수");
+	case Class::Assassin: return TEXT("암살자");
+	case Class::Healer:   return TEXT("힐러");
+	default:              return TEXT("?");
+	}
+}
+
 /** 유닛 1기의 편성 정보 */
 USTRUCT(BlueprintType)
 struct FFMUnitSpawn

@@ -1,9 +1,10 @@
 #include "FMCharPanelWidget.h"
 #include "Components/TextBlock.h"
-#include "Components/PanelWidget.h"
-#include "Components/WidgetSwitcher.h"
-#include "Blueprint/WidgetTree.h"
+#include "Components/Image.h"
+#include "Components/Button.h"
 #include "FMGameInstance.h"
+#include "FMEquipSlotWidget.h"
+#include "FMItemDragOp.h"
 
 namespace
 {
@@ -17,27 +18,6 @@ namespace
 		if (Item.HpBonus  > 0.f) Bonus += FString::Printf(TEXT(" 체력+%.0f"), Item.HpBonus);
 		return FText::FromString(FString::Printf(TEXT("%s: %s%s"), SlotLabel, *Item.Name, *Bonus));
 	}
-
-	FText InvLine(const FFMItemInfo& Item)
-	{
-		FString Desc;
-		if (Item.Category == 1)
-		{
-			Desc = FMSlotName(Item.Slot);
-			if (Item.AtkBonus > 0.f) Desc += FString::Printf(TEXT(" 공격+%.0f"), Item.AtkBonus);
-			if (Item.HpBonus  > 0.f) Desc += FString::Printf(TEXT(" 체력+%.0f"), Item.HpBonus);
-		}
-		else
-		{
-			Desc = FString::Printf(TEXT("회복 %.0f"), GetItemDef((uint32)Item.ItemId).amount);
-		}
-		return FText::FromString(FString::Printf(TEXT("%s  x%d   [%s]"), *Item.Name, Item.Count, *Desc));
-	}
-}
-
-UFMGameInstance* UFMCharPanelWidget::GetFMGI() const
-{
-	return GetGameInstance<UFMGameInstance>();
 }
 
 void UFMCharPanelWidget::NativeConstruct()
@@ -49,15 +29,18 @@ void UFMCharPanelWidget::NativeConstruct()
 		GI->OnMercSelected.AddUniqueDynamic(this, &UFMCharPanelWidget::HandleMercSelected);
 		GI->OnRosterChanged.AddUniqueDynamic(this, &UFMCharPanelWidget::HandleRosterChanged);
 
-		// 메뉴바 '상태'로 처음 열었을 때 빈 창이 아니도록 첫 용병을 기본으로
-		const TArray<FFMMercInfo> Roster = GI->GetRoster();
-		if (CurrentMercId == 0 && Roster.Num() > 0)
-			CurrentMercId = Roster[0].MercId;
+		// 메뉴바 '상태'로 처음 열었을 때 빈 창이 아니도록 지금 고른 용병을 기본으로
+		if (CurrentMercId == 0) CurrentMercId = GI->ActiveMercId;
 	}
 
-	WeaponButton   ->OnClicked.AddUniqueDynamic(this, &UFMCharPanelWidget::HandleWeaponClicked);
-	ArmorButton    ->OnClicked.AddUniqueDynamic(this, &UFMCharPanelWidget::HandleArmorClicked);
-	AccessoryButton->OnClicked.AddUniqueDynamic(this, &UFMCharPanelWidget::HandleAccessoryClicked);
+	if (WeaponButton)    WeaponButton   ->OnClicked.AddUniqueDynamic(this, &UFMCharPanelWidget::HandleWeaponClicked);
+	if (ArmorButton)     ArmorButton    ->OnClicked.AddUniqueDynamic(this, &UFMCharPanelWidget::HandleArmorClicked);
+	if (AccessoryButton) AccessoryButton->OnClicked.AddUniqueDynamic(this, &UFMCharPanelWidget::HandleAccessoryClicked);
+
+	// 칸마다 자기가 맡은 장비 종류를 못 박아 둔다 — WBP에서 깜빡해도 섞이지 않게
+	if (WeaponSlot)    WeaponSlot   ->EquipSlotValue = (int32)EquipSlot::Weapon;
+	if (ArmorSlot)     ArmorSlot    ->EquipSlotValue = (int32)EquipSlot::Armor;
+	if (AccessorySlot) AccessorySlot->EquipSlotValue = (int32)EquipSlot::Accessory;
 
 	Refresh();
 }
@@ -75,22 +58,15 @@ void UFMCharPanelWidget::NativeDestruct()
 
 void UFMCharPanelWidget::HandleMercSelected(int32 MercId)
 {
-	UWidgetSwitcher* Switcher = Cast<UWidgetSwitcher>(GetParent());
-	const bool bShownNow = Switcher && Switcher->IsVisible() && Switcher->GetActiveWidget() == this;
-
 	// 같은 용병 카드를 다시 누르면 닫기
-	if (bShownNow && MercId == CurrentMercId)
+	if (GetVisibility() == ESlateVisibility::Visible && MercId == CurrentMercId)
 	{
-		Switcher->SetVisibility(ESlateVisibility::Collapsed);
+		SetVisibility(ESlateVisibility::Collapsed);
 		return;
 	}
 
 	ShowMerc(MercId);
-	if (Switcher)
-	{
-		Switcher->SetActiveWidget(this);
-		Switcher->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	}
+	SetVisibility(ESlateVisibility::Visible);
 }
 
 void UFMCharPanelWidget::ShowMerc(int32 MercId)
@@ -121,43 +97,47 @@ void UFMCharPanelWidget::Refresh()
 			Info.Hp, Info.MaxHp, Info.Attack)));
 	}
 
-	WeaponText   ->SetText(SlotLine(TEXT("무기"),   Info.Weapon));
-	ArmorText    ->SetText(SlotLine(TEXT("방어구"), Info.Armor));
-	AccessoryText->SetText(SlotLine(TEXT("장신구"), Info.Accessory));
-
-	// 인벤토리 줄 — 매번 새로 만든다 (아이템 몇 개라 비용 무시)
-	InvList->ClearChildren();
-	for (const FFMItemInfo& Item : GI->GetInventoryItems())
+	if (PortraitImage)
 	{
-		UFMItemButton* Row = WidgetTree->ConstructWidget<UFMItemButton>();
-		Row->ItemId = Item.ItemId;
-		Row->SetBackgroundColor(FLinearColor(0.12f, 0.13f, 0.17f, 1.f));   // 기본 버튼은 밝은 회색이라 흰 글자가 안 보인다
-		Row->OnClicked.AddUniqueDynamic(Row, &UFMItemButton::HandleClicked);
-		Row->OnPicked.BindUObject(this, &UFMCharPanelWidget::HandleItemPicked);
-
-		UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
-		Label->SetText(InvLine(Item));
-		FSlateFontInfo Font = Label->GetFont();
-		Font.Size = RowFontSize;
-		Label->SetFont(Font);
-
-		Row->AddChild(Label);
-		InvList->AddChild(Row);
+		const TObjectPtr<UTexture2D>* Portrait = ClassPortraits.Find(Info.UnitClass);
+		UTexture2D* Tex = Portrait ? Portrait->Get() : nullptr;
+		PortraitImage->SetBrushFromTexture(Tex);
+		PortraitImage->SetVisibility(Tex ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
 	}
+
+	if (WeaponSlot)    WeaponSlot   ->SetItem(Info.Weapon);
+	if (ArmorSlot)     ArmorSlot    ->SetItem(Info.Armor);
+	if (AccessorySlot) AccessorySlot->SetItem(Info.Accessory);
+
+	if (WeaponText)    WeaponText   ->SetText(SlotLine(TEXT("무기"),   Info.Weapon));
+	if (ArmorText)     ArmorText    ->SetText(SlotLine(TEXT("방어구"), Info.Armor));
+	if (AccessoryText) AccessoryText->SetText(SlotLine(TEXT("장신구"), Info.Accessory));
+
+	RebuildInventory(GI->GetInventoryItems());
 }
 
-void UFMCharPanelWidget::HandleItemPicked(int32 ItemId)
+bool UFMCharPanelWidget::NativeOnDragOver(const FGeometry& Geometry, const FDragDropEvent& Event, UDragDropOperation* Op)
 {
-	if (UFMGameInstance* GI = GetFMGI())
-		GI->UseItemOnMerc(CurrentMercId, ItemId);   // 성공하면 OnRosterChanged → Refresh
+	Super::NativeOnDragOver(Geometry, Event, Op);
+	return Cast<UFMItemDragOp>(Op) != nullptr;
 }
 
-void UFMCharPanelWidget::Unequip(int32 EquipSlotValue)
+bool UFMCharPanelWidget::NativeOnDrop(const FGeometry& Geometry, const FDragDropEvent& Event, UDragDropOperation* Op)
 {
-	if (UFMGameInstance* GI = GetFMGI())
-		GI->UnequipMercSlot(CurrentMercId, EquipSlotValue);
+	// 장비 칸을 정확히 못 맞췄어도 창 안에 떨어뜨렸으면 제 칸으로 보낸다
+	const UFMItemDragOp* Drag = Cast<UFMItemDragOp>(Op);
+	if (!Drag) return false;
+
+	const int32 MercId = Drag->SourceMercId != 0 ? Drag->SourceMercId : CurrentMercId;
+	return EquipOn(MercId, Drag->Item.ItemId);
 }
 
-void UFMCharPanelWidget::HandleWeaponClicked()    { Unequip((int32)EquipSlot::Weapon); }
-void UFMCharPanelWidget::HandleArmorClicked()     { Unequip((int32)EquipSlot::Armor); }
-void UFMCharPanelWidget::HandleAccessoryClicked() { Unequip((int32)EquipSlot::Accessory); }
+bool UFMCharPanelWidget::UnequipSlot(int32 EquipSlotValue)
+{
+	UFMGameInstance* GI = GetFMGI();
+	return GI && GI->UnequipMercSlot(CurrentMercId, EquipSlotValue);
+}
+
+void UFMCharPanelWidget::HandleWeaponClicked()    { UnequipSlot((int32)EquipSlot::Weapon); }
+void UFMCharPanelWidget::HandleArmorClicked()     { UnequipSlot((int32)EquipSlot::Armor); }
+void UFMCharPanelWidget::HandleAccessoryClicked() { UnequipSlot((int32)EquipSlot::Accessory); }
