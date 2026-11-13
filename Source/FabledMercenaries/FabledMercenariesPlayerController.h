@@ -134,6 +134,13 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "UI")
 	TObjectPtr<class UFMChatWidget> ChatWidget;
 
+	/** 데미지 팝업 레이어 (WBP_DamagePopup) — 화면 전체를 덮는 투명 레이어. 비우면 숫자가 안 뜬다 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "UI")
+	TSubclassOf<class UFMDamagePopupWidget> DamagePopupClass;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UI")
+	TObjectPtr<class UFMDamagePopupWidget> DamagePopupWidget;
+
 public:
 
 	/** Constructor */

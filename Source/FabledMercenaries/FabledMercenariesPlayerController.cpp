@@ -22,6 +22,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "FMChatWidget.h"
 #include "FMChatSubsystem.h"
+#include "FMDamagePopupWidget.h"
 #include "Engine/GameInstance.h"
 
 AFabledMercenariesPlayerController::AFabledMercenariesPlayerController()
@@ -49,6 +50,14 @@ void AFabledMercenariesPlayerController::BeginPlay()
 	{
 		ChatWidget = CreateWidget<UFMChatWidget>(this, ChatWidgetClass);
 		if (ChatWidget) ChatWidget->AddToViewport(10);   // HUD(기본 0) 위
+	}
+
+	// 데미지 팝업도 전투 중에 보여야 하므로 HUD 밖. 채팅창보다 아래에 깔아
+	// 숫자가 입력창을 덮지 않게 한다
+	if (DamagePopupClass && !DamagePopupWidget)
+	{
+		DamagePopupWidget = CreateWidget<UFMDamagePopupWidget>(this, DamagePopupClass);
+		if (DamagePopupWidget) DamagePopupWidget->AddToViewport(5);
 	}
 }
 

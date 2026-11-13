@@ -29,6 +29,18 @@ static FString SkillLabel(int32 TypeValue)
 	}
 }
 
+/** 방어 방식 이름 — 팝업에 그대로 뜬다 */
+static FString DefenseLabel(int32 KindValue)
+{
+	switch ((DefenseKind)KindValue)
+	{
+	case DefenseKind::Parry: return TEXT("패링!");
+	case DefenseKind::Block: return TEXT("막음!");
+	case DefenseKind::Dodge: return TEXT("회피!");
+	default:                 return TEXT("방어!");
+	}
+}
+
 static EUnitAnim ToAnim(ActionState s)
 {
 	switch (s)
@@ -137,8 +149,15 @@ void AFMSimManager::BindSimCallbacks()
 	Sim.OnAttackFired = [this](uint64_t Id)
 	{ PendingEvents.Add({ ESimEvt::AttackFired, Id }); };
 
-	Sim.OnDamaged = [this](uint64_t Id, bool bBehind, bool bCrit)
-	{ PendingEvents.Add({ ESimEvt::Damaged, Id, 0, bBehind, bCrit }); };
+	Sim.OnDamaged = [this](uint64_t Id, float Damage, bool bBehind, bool bCrit)
+	{
+		FSimEvent E{ ESimEvt::Damaged, Id, 0, bBehind, bCrit };
+		E.Damage = Damage;
+		PendingEvents.Add(E);
+	};
+
+	Sim.OnDefended = [this](uint64_t Id, DefenseKind Kind)
+	{ PendingEvents.Add({ ESimEvt::Defended, Id, (int32)Kind }); };
 
 	Sim.OnDeath = [this](uint64_t Id)
 	{ PendingEvents.Add({ ESimEvt::Death, Id }); };
@@ -179,7 +198,22 @@ void AFMSimManager::DrainSimEvents()
 		switch (E.Kind)
 		{
 		case ESimEvt::AttackFired: A->NotifyAttackFired();                    break;
-		case ESimEvt::Damaged:     A->NotifyDamaged(E.bFromBehind, E.bCrit);  break;
+
+		case ESimEvt::Damaged:
+			A->NotifyDamaged(E.bFromBehind, E.bCrit);
+			ShowHitPopup(E.UnitId, FString::FromInt(FMath::RoundToInt(E.Damage)), E.bCrit);
+			if (bLogEveryHit)
+			{
+				LogCombat(FString::Printf(TEXT("%s %d 피해%s"), *UnitLabel(E.UnitId),
+					FMath::RoundToInt(E.Damage), E.bCrit ? TEXT(" (후면)") : TEXT("")));
+			}
+			break;
+
+		case ESimEvt::Defended:
+			ShowHitPopup(E.UnitId, DefenseLabel(E.Param), false);
+			if (bLogEveryHit)
+				LogCombat(FString::Printf(TEXT("%s %s"), *UnitLabel(E.UnitId), *DefenseLabel(E.Param)));
+			break;
 		case ESimEvt::Death:
 			A->NotifyDeath();
 			LogCombat(FString::Printf(TEXT("%s 쓰러짐"), *UnitLabel(E.UnitId)));
@@ -797,6 +831,22 @@ void AFMSimManager::LogCombat(const FString& Text) const
 void AFMSimManager::LogSystem(const FString& Text) const
 {
 	if (UFMChatSubsystem* C = ChatSys()) C->PostSystem(Text);
+}
+
+void AFMSimManager::ShowHitPopup(uint64 UnitId, const FString& Text, bool bCrit)
+{
+	if (!OnUnitHitDisplay.IsBound()) return;
+
+	auto It = Sim.Units().find(UnitId);
+	if (It == Sim.Units().end()) return;
+
+	const Unit& U = It->second;
+
+	// 머리 위에서 출발. 같은 유닛이 연달아 맞으면 숫자가 겹치므로 좌우로 조금 흩어 놓는다
+	const float Jitter = FMath::FRandRange(-25.f, 25.f);
+	const FVector At(U.pos.x + Jitter, U.pos.y, GroundZAt(U.pos.x, U.pos.y) + 150.f);
+
+	OnUnitHitDisplay.Broadcast(At, Text, bCrit, U.faction == Faction::Player);
 }
 
 FString AFMSimManager::UnitLabel(uint64 UnitId) const

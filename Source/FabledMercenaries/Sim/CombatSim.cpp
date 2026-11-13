@@ -101,15 +101,15 @@ float CombatSim::Rand01()
 }
 
 // 피격 시 방어 패시브 롤. 쿨 찬 방어 스킬이 성공하면 쿨다운 시작 후 true.
-bool CombatSim::TryDefend(Unit& defender)
+DefenseKind CombatSim::TryDefend(Unit& defender)
 {
 	// 방어 태세: 액티브 Defense 스킬의 차단 확률로 막음(쿨 무시, 정면 한정은 ResolveHit에서)
 	if (defender.defendStance)
 	{
 		for (auto& s : defender.skills)
 			if (s.category == SkillCategory::Active && s.type == SkillType::Defense)
-				return Rand01() < s.chance;
-		return false;
+				return (Rand01() < s.chance) ? s.defenseKind : DefenseKind::None;
+		return DefenseKind::None;
 	}
 
 	for (auto& s : defender.skills)
@@ -120,10 +120,10 @@ bool CombatSim::TryDefend(Unit& defender)
 		if (Rand01() < s.chance)
 		{
 			s.cdRemaining = s.cooldown;                       // 방어 성공 → 쿨다운 시작
-			return true;
+			return s.defenseKind;
 		}
 	}
-	return false;
+	return DefenseKind::None;
 }
 
 // <summary>
@@ -467,12 +467,17 @@ bool CombatSim::ResolveHit(Unit& target, const Vec3& fromPos, float damage)
 {
 	if (!target.alive) return false;
 	bool fromBehind = (fromPos - target.pos).Normalized().Dot(target.facing) < 0.f;
-	bool defended = (!fromBehind) && TryDefend(target); // 후면은 못 막음(방어 무시). 정면일 때만 방어 롤.
-	if (defended) return false;
+	// 후면은 못 막음(방어 무시). 정면일 때만 방어 롤.
+	const DefenseKind defended = fromBehind ? DefenseKind::None : TryDefend(target);
+	if (defended != DefenseKind::None)
+	{
+		if (OnDefended) OnDefended(target.id, defended);
+		return false;
+	}
 
 	float dmg = damage * (fromBehind ? CRIT_MULT : 1.f);   // 후면=크리 배율
 	target.hp -= dmg;
-	if (OnDamaged) OnDamaged(target.id, fromBehind, fromBehind);
+	if (OnDamaged) OnDamaged(target.id, dmg, fromBehind, fromBehind);
 
 	// 원거리 조준 중 피격 → 조준 풀림
 	if (target.ranged && target.executing && target.current.type == CommandType::Attack && !target.attackFired)

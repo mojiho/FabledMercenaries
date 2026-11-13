@@ -41,7 +41,10 @@ public:	// 등록 — brain 기본 null(=사람 조종). AI면 구체 Brain을 m
 	// 상위(UE) 레이어 구독 — Sim은 애니를 모르고 이벤트만 통지
 	std::function<void(uint64_t unitId, uint32_t slotId)>           OnCommandComplete; // 명령 완료
 	std::function<void(uint64_t unitId)>                            OnAttackFired;     // 휘두름/발사 순간
-	std::function<void(uint64_t unitId, bool fromBehind, bool crit)> OnDamaged;        // 피격 리액션
+	// 피격 리액션. damage는 방어/크리 배율이 모두 적용된 '실제로 깎인' 값 — 화면 팝업이 이 숫자를 띄운다
+	std::function<void(uint64_t unitId, float damage, bool fromBehind, bool crit)> OnDamaged;
+	// 막아냄 (피해 0). 어떤 방식으로 막았는지까지 넘긴다 — 패링/블록/회피를 따로 보여주기 위해
+	std::function<void(uint64_t unitId, DefenseKind kind)>           OnDefended;
 	std::function<void(uint64_t unitId)>                            OnDeath;           // 사망
 	std::function<void(uint64_t unitId, SkillType type)>           OnSkillCast;        // 스킬 시전
 
@@ -55,7 +58,8 @@ public:	// 등록 — brain 기본 null(=사람 조종). AI면 구체 Brain을 m
 private:
 	uint32_t NewSlot() { return ++_slotGen; }  // slotId 발급기. 0은 예약 안 된 명령용.
 
-	bool     TryDefend(Unit& defender);   // 방어 패시브 롤(성공 시 쿨다운 시작)
+	/** 방어 롤(성공 시 쿨다운 시작). @return 막아낸 방식, None이면 못 막음 */
+	DefenseKind TryDefend(Unit& defender);
 	float    Rand01();                    // 결정적 난수 [0,1)
 	uint32_t _rng = 2463534242u;          // 난수 시드(고정 → 재현 가능)
 

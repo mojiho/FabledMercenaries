@@ -6,7 +6,7 @@
 #include "FMItemTypes.h"
 #include "FMSimManager.generated.h"
 
-enum class ESimEvt : uint8 {AttackFired, Damaged, Death, SkillCast, CmdComplete};
+enum class ESimEvt : uint8 {AttackFired, Damaged, Defended, Death, SkillCast, CmdComplete};
 
 struct FSimEvent
 {
@@ -20,7 +20,17 @@ struct FSimEvent
 	// 이벤트를 흘릴 때 담아 둔다: 소진 시점에는 명령이 이미 끝나 current가 비어 있을 수 있다.
 	FVector Pos = FVector::ZeroVector;
 	float   Radius = 0.f;
+
+	/** Damaged: 실제로 깎인 피해량 (방어·크리 배율 적용 후) */
+	float Damage = 0.f;
 };
+
+/**
+ * 유닛이 피해를 입었다 / 막아냈다 — 데미지 팝업이 구독한다.
+ * Text는 그대로 띄울 문자열("128", "패링!"), bCrit이면 크게 띄운다.
+ */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FFMUnitHitDisplay,
+	FVector, WorldPos, const FString&, Text, bool, bCrit, bool, bAlly);
 
 USTRUCT(BlueprintType)
 struct FSkillInfo
@@ -227,6 +237,18 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Encounter")
 	FFMCombatStateChanged OnCombatStateChanged;
 
+	/** 피격·방어가 일어난 자리 — 데미지 팝업 레이어가 구독한다 */
+	UPROPERTY(BlueprintAssignable, Category = "Combat")
+	FFMUnitHitDisplay OnUnitHitDisplay;
+
+	/**
+	 * 타격 하나하나를 전투 로그에도 남길지. 기본 꺼둠 —
+	 * 평타가 0.6초마다 들어가는 전투에서는 채팅창이 숫자로 뒤덮인다.
+	 * 숫자는 머리 위 팝업으로 보는 게 기본이고, 이건 밸런스 확인용 스위치다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Combat")
+	bool bLogEveryHit = false;
+
 	/** 에디터에서 지정하는 디버그 인카운터 — BeginPlay에서 바로 시작할 때 쓴다 */
 	UPROPERTY(EditAnywhere, Category = "Encounter")
 	FFMEncounterDef DebugEncounter;
@@ -349,6 +371,9 @@ private:
 
 	/** 전투 로그에 쓸 유닛 이름 — "지휘관" / "전사 #2" / "적 궁수" */
 	FString UnitLabel(uint64 UnitId) const;
+
+	/** 유닛 머리 위에 팝업 한 개를 띄우라고 알린다 (구독자가 없으면 아무 일도 없다) */
+	void ShowHitPopup(uint64 UnitId, const FString& Text, bool bCrit);
 
 	/** 채팅 서브시스템 (없을 수 있다 — GameInstance가 없는 테스트 맵 등) */
 	class UFMChatSubsystem* ChatSys() const;
