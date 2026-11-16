@@ -110,6 +110,23 @@ void MageBrain::Decide(CombatSim& sim, Unit& self, float dt)
 	if (self.executing && (self.current.type == CommandType::Skill || self.current.type == CommandType::Focus))
 		return;
 
+	// 벽에 가려 있으면 쏴도 마법탄이 벽에 박힌다 — 쿨과 MP만 버리므로 먼저 시야를 확보한다
+	if (!sim.HasLineOfSight(self.pos, target->pos))
+	{
+		if (!(self.executing && self.current.type == CommandType::Move))
+		{
+			// 목적은 '시야 확보'지 '접근'이 아니다 — 대상 위치로 걸어가면 사거리 600을
+			// 버리고 코앞까지 간다. 쏠 수 있는 가장 가까운 자리로 비켜선다.
+			Vec3 spot;
+			const bool bHasSpot = sim.FindVantagePoint(self, *target, spot);
+
+			Command mv; mv.type = CommandType::Move;
+			mv.waypoints.push_back(bHasSpot ? spot : target->pos);
+			sim.IssueCommand(self.id, mv, false);
+		}
+		return;
+	}
+
 	if (bolt->cdRemaining <= 0.f && self.mp >= bolt->mpCost)
 	{
 		// 쿨 차고 MP 충분 → 마법탄

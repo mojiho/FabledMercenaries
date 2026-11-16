@@ -23,6 +23,7 @@
 #include "FMChatWidget.h"
 #include "FMChatSubsystem.h"
 #include "FMDamagePopupWidget.h"
+#include "FMSpeechBubbleWidget.h"
 #include "Engine/GameInstance.h"
 
 AFabledMercenariesPlayerController::AFabledMercenariesPlayerController()
@@ -58,6 +59,14 @@ void AFabledMercenariesPlayerController::BeginPlay()
 	{
 		DamagePopupWidget = CreateWidget<UFMDamagePopupWidget>(this, DamagePopupClass);
 		if (DamagePopupWidget) DamagePopupWidget->AddToViewport(5);
+	}
+
+	// 말풍선은 데미지 숫자 위, 채팅창 아래. 숫자에 글자가 묻히면 안 되고,
+	// 입력창을 덮어서도 안 된다
+	if (SpeechBubbleClass && !SpeechBubbleWidget)
+	{
+		SpeechBubbleWidget = CreateWidget<UFMSpeechBubbleWidget>(this, SpeechBubbleClass);
+		if (SpeechBubbleWidget) SpeechBubbleWidget->AddToViewport(7);
 	}
 }
 

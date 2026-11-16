@@ -141,6 +141,16 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "UI")
 	TObjectPtr<class UFMDamagePopupWidget> DamagePopupWidget;
 
+	/**
+	 * 말풍선 레이어 (WBP_SpeechBubble) — 채팅의 Say 메시지를 말한 사람 머리 위에 띄운다.
+	 * 비우면 말이 채팅창에만 남는다(풍선이 안 뜬다).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "UI")
+	TSubclassOf<class UFMSpeechBubbleWidget> SpeechBubbleClass;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UI")
+	TObjectPtr<class UFMSpeechBubbleWidget> SpeechBubbleWidget;
+
 public:
 
 	/** Constructor */

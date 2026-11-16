@@ -308,6 +308,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 private:
 	/** (X,Y) 지점의 실제 지형 높이를 트레이스로 구함 */
 	float GroundZAt(float X, float Y) const;
@@ -346,7 +347,85 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float AvatarTurnRate = 1.0f;
 
+	/**
+	 * 유닛의 몸 반경을 바닥에 원으로 그린다. 디버그용.
+	 *
+	 * 이 원이 서로 파고들면 밀어내기가 안 돌고 있는 것이다 —
+	 * 겹침 해소가 제대로 돌면 원끼리 닿기만 하고 겹치지 않는다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Combat")
+	bool bDrawBodies = false;
+
+	// ──────────────────────────── 장애물 격자 ────────────────────────────
+	// Sim은 UE 월드를 모르므로 지형을 직접 물어볼 수 없다. 여기서 레벨을 훑어
+	// '못 서는 칸' 격자를 구워 Sim에 포인터로 넘긴다 (CombatSim::SetNavGrid).
+	// 서버에서는 같은 격자를 파일로 읽어 쓰면 된다 (NavGrid::Deserialize).
+
+	/** BeginPlay에서 격자를 자동으로 굽는다. 끄면 장애물이 없는 상태(예전 동작)로 돈다 */
+	UPROPERTY(EditAnywhere, Category = "Nav")
+	bool bBakeNavOnBeginPlay = true;
+
+	/** 한 칸 크기(cm). 작을수록 벽을 정밀하게 따지만 베이크가 제곱으로 느려진다 */
+	UPROPERTY(EditAnywhere, Category = "Nav")
+	float NavCellSize = 50.f;
+
+	/** 베이크 범위 — 이 액터를 중심으로 한 정사각형의 한 변(cm). 전장을 덮을 만큼만 */
+	UPROPERTY(EditAnywhere, Category = "Nav")
+	float NavExtent = 6000.f;
+
+	/**
+	 * 격자를 부풀릴 반경(cm). 유닛이 이만큼 벽에서 떨어져 걷는다 — 벽에 몸이 박혀 보이는 걸 막는다.
+	 *
+	 * 가장 덩치 큰 클래스의 bodyRadius(Class.h, 현재 탱커 44) 이상으로 둘 것.
+	 * 이보다 작으면 탱커만 몸이 벽에 끼는 통로가 생긴다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Nav")
+	float NavAgentRadius = 45.f;
+
+	/** 유닛 키(cm). 이 높이 안에 걸리는 게 있으면 못 서는 칸으로 본다 */
+	UPROPERTY(EditAnywhere, Category = "Nav")
+	float NavAgentHeight = 180.f;
+
+	/** 걸어 오를 수 있는 턱 높이(cm). 이웃 칸과의 높이차가 여기에 경사 허용분을 더한 값을 넘으면 막는다 */
+	UPROPERTY(EditAnywhere, Category = "Nav")
+	float NavMaxStepUp = 45.f;
+
+	/** 걸어 오를 수 있는 경사(도). 칸 하나를 건너는 동안 이 기울기까지는 턱으로 보지 않는다 */
+	UPROPERTY(EditAnywhere, Category = "Nav")
+	float NavWalkableSlopeDeg = 45.f;
+
+	/** 절벽·턱도 막을지. 끄면 벽과 건물만 막고 높이차는 무시한다 */
+	UPROPERTY(EditAnywhere, Category = "Nav")
+	bool bNavBlockCliffs = true;
+
+	/** 격자를 화면에 그린다 (벽=빨강, 여유칸=주황). 디버그용 */
+	UPROPERTY(EditAnywhere, Category = "Nav")
+	bool bDrawNavGrid = false;
+
+	/** 격자 디버그를 카메라 주변 이 반경(cm)만 그린다 — 전부 그리면 수만 개가 된다 */
+	UPROPERTY(EditAnywhere, Category = "Nav")
+	float NavDrawRadius = 1500.f;
+
+	/** 레벨을 훑어 장애물 격자를 다시 굽는다. 지형이나 건물을 옮긴 뒤에 누르면 된다 */
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "Nav")
+	void BakeNavGrid();
+
+	/** 격자를 비운다 — 장애물 없는 상태로 되돌린다 */
+	UFUNCTION(BlueprintCallable, Category = "Nav")
+	void ClearNavGrid();
+
+	/** 이 지점에 유닛이 설 수 있는가 (UI에서 이동 가능 여부를 미리 보여줄 때) */
+	UFUNCTION(BlueprintPure, Category = "Nav")
+	bool IsNavWalkable(const FVector& WorldPos) const;
+
 private:
+	/**
+	 * 장애물 격자. Sim에는 포인터로만 넘기므로 수명은 이 액터가 들고 있어야 한다
+	 * (EndPlay에서 Sim.SetNavGrid(nullptr)로 끊는다).
+	 */
+	NavGrid Nav;
+
+	void DrawNavGridDebug() const;
 
 	bool bMenuOpen = false;	// 링 표시 숨김 여부 (UMG에서 설정)
 	
@@ -387,8 +466,17 @@ private:
 	TArray<uint64> CombatUnitIds;    // 이번 인카운터로 스폰된 유닛 — 종료 시 이 목록만 지운다
 	TMap<uint64, uint32> UnitToMercId;   // 로스터에서 스폰된 유닛 id → 용병 id (전투 결과를 되돌려 적는 용도)
 
-	/** Sim에 유닛 1기 + 화면 액터 1개를 만든다. 반환값은 발급된 id */
-	uint64 SpawnSimUnit(EFMClass Cls, uint64 OwnerId, Faction Fac, const FVector2D& PlanarPos);
+	/**
+	 * Sim에 유닛 1기 + 화면 액터 1개를 만든다. 반환값은 발급된 id.
+	 *
+	 * @param bSnapToNav  스폰 지점이 막힌 칸이면 가장 가까운 설 수 있는 칸으로 당긴다.
+	 *                    전투 유닛은 켠다 — 진형 좌표가 지형을 안 보고 계산되므로 엄폐물 위에
+	 *                    떨어질 수 있고, 그러면 그 유닛은 한 발도 못 움직인다.
+	 *                    탐험 아바타는 끈다 — 격자를 따르지 않는 유닛이라(점프로 턱을 넘는다)
+	 *                    당기면 멀쩡히 설 수 있는 자리에서 엉뚱한 데로 순간이동한다.
+	 */
+	uint64 SpawnSimUnit(EFMClass Cls, uint64 OwnerId, Faction Fac, const FVector2D& PlanarPos,
+	                    bool bSnapToNav = true);
 
 	/** 전투 중 승패가 갈렸는지 검사 — 갈렸으면 EndEncounter까지 수행 */
 	void CheckCombatResolution();

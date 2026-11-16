@@ -104,6 +104,11 @@ void AFMSimManager::BeginPlay()
 	Super::BeginPlay();
 	BindSimCallbacks();   // 유닛 등록보다 먼저 — 첫 Tick 전에 콜백이 걸려 있어야 함
 
+	// 장애물 격자도 유닛보다 먼저. 아바타/용병이 스폰될 때 이미 경로탐색이 살아 있어야
+	// 첫 이동 명령부터 벽을 피해 간다. (베이크는 유닛 액터를 무시하므로 순서상 문제도 없다)
+	if (bBakeNavOnBeginPlay)
+		BakeNavGrid();
+
 	// 지휘관은 레벨 수명 내내 유지된다 (유닛만 인카운터마다 들락날락).
 	// 적 지휘관이 없으면 적의 명령이 전부 Rejected 되므로 여기서 같이 등록.
 	Sim.AddCommander(1, CommanderType::Command);
@@ -123,7 +128,9 @@ void AFMSimManager::BeginPlay()
 	{
 		// 매니저 액터가 놓인 자리에서 출발. 전투 유닛과 달리 CombatUnitIds에 넣지 않는다.
 		const FVector Home = GetActorLocation();
-		AvatarUnitId = SpawnSimUnit(EFMClass::Warrior, AVATAR_COMMANDER_ID, Faction::Player, FVector2D(Home.X, Home.Y));
+		// 아바타는 격자를 따르지 않으므로 스폰 지점도 당기지 않는다 (bSnapToNav=false)
+		AvatarUnitId = SpawnSimUnit(EFMClass::Warrior, AVATAR_COMMANDER_ID, Faction::Player,
+			FVector2D(Home.X, Home.Y), false);
 		if (Unit* Av = Sim.GetUnit(AvatarUnitId))
 		{
 			Av->moveSpeed = AvatarMoveSpeed;   // 직업 이속(전사 300=걷기) 대신 달리기 속도
@@ -131,6 +138,10 @@ void AFMSimManager::BeginPlay()
 			// 탐험 중엔 턴 제한 없음. 월드맵 드래그 이동이 0.1초마다 Move 명령을 새로 넣는데
 			// 턴테이블에 걸리면 조작이 통째로 씹힌다. 전투에 들어갈 때만 켠다(StartEncounter).
 			Av->turnMax = 0.f;
+
+			// 탐험 중엔 격자를 쓰지 않는다 — BlockAvatarAtLedges가 지형 높이를 직접 재고
+			// 점프로 턱을 넘는 것까지 다룬다. 격자까지 끼면 뛰어오를 수 있는 턱을 먼저 막는다.
+			Av->useNavGrid = false;
 		}
 		UE_LOG(LogTemp, Warning, TEXT("[FM] 탐험 아바타 스폰 id=%llu"), AvatarUnitId);
 	}
@@ -142,6 +153,14 @@ void AFMSimManager::BeginPlay()
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("[FM] SimManager BeginPlay, units=%d"), (int32)Sim.Units().size());
+}
+
+void AFMSimManager::EndPlay(const EEndPlayReason::Type Reason)
+{
+	// Sim이 들고 있는 건 Nav의 '포인터'다. 멤버 파괴 순서에 기대지 않고 명시적으로 끊는다 —
+	// 나중에 Sim 소멸자가 격자를 들여다보게 되면 그때 조용히 터진다.
+	Sim.SetNavGrid(nullptr);
+	Super::EndPlay(Reason);
 }
 
 void AFMSimManager::BindSimCallbacks()
@@ -233,12 +252,37 @@ void AFMSimManager::DrainSimEvents()
 //  인카운터 — 탐험(아바타만) ↔ 전투(용병+적 스폰)
 // ─────────────────────────────────────────────────────────────────────────────
 
-uint64 AFMSimManager::SpawnSimUnit(EFMClass Cls, uint64 OwnerId, Faction Fac, const FVector2D& PlanarPos)
+uint64 AFMSimManager::SpawnSimUnit(EFMClass Cls, uint64 OwnerId, Faction Fac, const FVector2D& PlanarPos,
+                                   bool bSnapToNav)
 {
 	const uint64 Id = NextUnitId++;
 
-	Sim.AddUnit(Id, OwnerId, Fac, ToSimClass(Cls),
-		Vec3{ (float)PlanarPos.X, (float)PlanarPos.Y, 0.f },   // Z는 Sim 지면(0) 고정
+	// 진형 좌표는 지형을 보지 않고 계산된다 — 엄폐물이나 건물 위로 떨어질 수 있고,
+	// 그렇게 스폰된 유닛은 막힌 칸에 갇혀 한 발도 못 움직인다(ResolveStep이 제자리를 돌려줌).
+	// 전장을 심볼 자리에 고정하면서 접근 방향에 따라 진형 축이 돌기 때문에, 운이 아니라
+	// 반드시 일어나는 일이 됐다. 여기서 가장 가까운 설 수 있는 칸으로 당긴다.
+	Vec3 Spawn{ (float)PlanarPos.X, (float)PlanarPos.Y, 0.f };   // Z는 Sim 지면(0) 고정
+	if (bSnapToNav && Nav.Valid() && !Nav.IsWalkableAt(Spawn))
+	{
+		Vec3 Snapped;
+		if (Nav.NearestWalkable(Spawn, Snapped))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[FM][Nav] 스폰 지점이 막혀 있어 당김 (%.0f, %.0f) → (%.0f, %.0f)"),
+				Spawn.x, Spawn.y, Snapped.x, Snapped.y);
+			Spawn = Snapped;
+		}
+		else
+		{
+			// 주변이 전부 막혔다 — 당길 데가 없으니 그대로 둔다(최소한 보이기는 한다).
+			// 전장 자체가 장애물 속이라는 뜻이라 배치를 고쳐야 한다.
+			UE_LOG(LogTemp, Error,
+				TEXT("[FM][Nav] 스폰 지점 (%.0f, %.0f) 주변에 설 수 있는 칸이 없다 — 전장 배치를 확인할 것"),
+				Spawn.x, Spawn.y);
+		}
+	}
+
+	Sim.AddUnit(Id, OwnerId, Fac, ToSimClass(Cls), Spawn,
 		std::make_unique<GuardBrain>());                        // 명령 없을 때 근처 적에게 자동 반격
 
 	if (UnitClass)
@@ -446,6 +490,10 @@ void AFMSimManager::StartEncounter(const FFMEncounterDef& Def, const FVector& Ce
 			Av->turnMax   = AvatarTurnMax;
 			Av->turnRate  = AvatarTurnRate;
 			Av->turnGauge = Av->turnMax;
+
+			// 전투 중엔 점프가 없으므로 격자를 따른다 — 용병만 벽을 돌아가고 지휘관은
+			// 통과하면 같은 전장에서 규칙이 둘로 갈린다
+			Av->useNavGrid = true;
 		}
 	}
 
@@ -569,8 +617,9 @@ void AFMSimManager::EndEncounter()
 	// 탐험 복귀 — 아바타 턴 제한 해제. 안 풀면 월드맵 드래그 이동이 씹힌다
 	if (Unit* Av = Sim.GetUnit(AvatarUnitId))
 	{
-		Av->turnMax   = 0.f;
-		Av->turnGauge = 0.f;
+		Av->turnMax    = 0.f;
+		Av->turnGauge  = 0.f;
+		Av->useNavGrid = false;   // 턱 판정 + 점프 쪽으로 되돌린다
 	}
 
 	SelectedUnitId = 0;
@@ -655,6 +704,8 @@ void AFMSimManager::Tick(float DeltaSeconds)
 		}
 	}
 
+	if (bDrawNavGrid) DrawNavGridDebug();   // 막힌 칸 표시 (디테일 패널에서 켜고 끈다)
+
 	// 디버그용 : 모든 유닛 위치 표시
 	for (const auto& Pair : Sim.Units())
 	{
@@ -689,7 +740,13 @@ void AFMSimManager::Tick(float DeltaSeconds)
 		const FVector Feet    = Loc - FVector(0, 0, 45.f);   // 바닥 근처 (Loc은 +50이라 -45 = +5)
 		DrawDebugCircle(GetWorld(), Feet, 55.f, 32, RingCol, false, -1.f, 0, Thick,
 			FVector(1, 0, 0), FVector(0, 1, 0), false);   // XY 평면(바닥에 눕힘)
-		
+
+		// 몸 반경 — 선택 링(55 고정)과 달리 Sim이 실제로 자리를 차지한다고 보는 크기다.
+		// 두 원이 파고들어 있으면 밀어내기가 안 먹고 있다는 뜻
+		if (bDrawBodies && U.bodyRadius > 0.f)
+			DrawDebugCircle(GetWorld(), Feet, U.bodyRadius, 24, FColor(255, 160, 40), false, -1.f,
+				SDPG_Foreground, 2.f, FVector(1, 0, 0), FVector(0, 1, 0), false);
+
 		// 바라보는 방향 화살표 — 전투 중에만. 도착 방향을 확인하려고 두는 것이라
 		// 월드맵·탐험맵에서는 아바타 혼자 노란 화살표를 달고 다녀서 거슬린다.
 		if (bInCombat)
@@ -921,6 +978,177 @@ void AFMSimManager::DrawSkillBlast(const FVector& Center, float Radius) const
 		FVector(1, 0, 0), FVector(0, 1, 0), false);
 	DrawDebugSphere(GetWorld(), Center + FVector(0, 0, Radius * 0.35f), Radius * 0.5f, 16,
 		FColor(255, 120, 40), false, Life, SDPG_World, 3.f);
+}
+
+// ──────────────────────────── 장애물 격자 ────────────────────────────
+
+void AFMSimManager::BakeNavGrid()
+{
+	UWorld* W = GetWorld();
+	if (!W) return;
+
+	if (NavCellSize <= 0.f || NavExtent <= 0.f)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[FM][Nav] NavCellSize/NavExtent가 0 이하 — 베이크 생략"));
+		return;
+	}
+
+	const double T0 = FPlatformTime::Seconds();
+
+	// 칸 수 상한 512 — 512x512면 26만 칸이고 트레이스가 50만 번이다. 그 이상은 베이크가 몇 초씩 걸린다.
+	// 더 넓은 범위가 필요하면 셀 크기를 키우는 게 맞다.
+	const int32 Cells = FMath::Clamp(FMath::CeilToInt(NavExtent / NavCellSize), 1, 512);
+
+	const FVector Center = GetActorLocation();
+	const float   Half   = Cells * NavCellSize * 0.5f;
+
+	// Sim의 지면은 z=0이다 (MoveSelectedAlong이 웨이포인트 z를 0으로 넣는다).
+	// 격자 원점 z도 0으로 둬야 CellToWorld가 돌려주는 경로점이 Sim 좌표계와 맞는다.
+	const Vec3 MinCorner{ (float)Center.X - Half, (float)Center.Y - Half, 0.f };
+
+	Nav.Reset(MinCorner, NavCellSize, Cells, Cells);
+
+	// 유닛은 장애물이 아니다 — 유닛끼리의 충돌은 Sim이 따로 다뤄야 할 별개의 문제다.
+	// 여기서 유닛을 넣으면 전투 시작 위치가 통째로 '못 서는 칸'이 된다.
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(FMNavBake), false);
+	Params.AddIgnoredActor(this);
+	for (const auto& Pair : UnitActors)
+		if (AFMUnit* A = Pair.Value.Get()) Params.AddIgnoredActor(A);
+
+	// 몸통 구체. 반경은 에이전트 반경을 쓰고, 중심은 바닥에서 몸 절반 높이에 둔다 —
+	// 바닥 자체를 짚지 않으면서 벽/건물 안쪽을 잡아내는 높이.
+	const float BodyR  = FMath::Max(1.f, NavAgentRadius);
+	const float BodyZ  = FMath::Max(BodyR + 1.f, NavAgentHeight * 0.5f);
+	const FCollisionShape Body = FCollisionShape::MakeSphere(BodyR);
+
+	TArray<float> Heights;
+	Heights.SetNumUninitialized(Cells * Cells);
+
+	int32 SolidCount = 0;
+
+	// 1패스 — 바닥 높이와 '몸이 들어갈 자리가 있나'
+	for (int32 CY = 0; CY < Cells; ++CY)
+	for (int32 CX = 0; CX < Cells; ++CX)
+	{
+		const Vec3  C = Nav.CellToWorld(CX, CY);
+		const float Z = GroundZAt(C.x, C.y);
+		Heights[CY * Cells + CX] = Z;
+
+		// GroundZAt과 같은 채널(ECC_Visibility)을 쓴다 — 높이를 재는 기준과 막는 기준이
+		// 어긋나면 '바닥은 있는데 설 수는 없는' 칸이 생긴다.
+		const FVector At(C.x, C.y, Z + BodyZ);
+		if (W->OverlapAnyTestByChannel(At, FQuat::Identity, ECC_Visibility, Body, Params))
+		{
+			Nav.SetSolid(CX, CY, true);
+			++SolidCount;
+		}
+	}
+
+	// 2패스 — 턱/절벽. 이웃과의 높이차가 '턱 높이 + 칸 하나만큼의 경사'를 넘으면 막는다.
+	// 1패스와 분리한 이유: 높이 배열이 전부 채워진 뒤에야 비교할 수 있다.
+	if (bNavBlockCliffs)
+	{
+		const float SlopeAllow = NavCellSize * FMath::Tan(FMath::DegreesToRadians(
+			FMath::Clamp(NavWalkableSlopeDeg, 0.f, 85.f)));
+		const float Allow = NavMaxStepUp + SlopeAllow;
+
+		static const int32 NX[4] = { 1, -1, 0,  0 };
+		static const int32 NY[4] = { 0,  0, 1, -1 };
+
+		// 1패스 결과를 읽으면서 쓰면 방금 막은 칸이 다시 씨앗이 되어 번진다 → 원본을 떠 놓고 읽는다
+		TArray<bool> WasSolid;
+		WasSolid.SetNumUninitialized(Cells * Cells);
+		for (int32 i = 0; i < Cells * Cells; ++i)
+			WasSolid[i] = Nav.IsSolid(i % Cells, i / Cells);
+
+		for (int32 CY = 0; CY < Cells; ++CY)
+		for (int32 CX = 0; CX < Cells; ++CX)
+		{
+			if (WasSolid[CY * Cells + CX]) continue;
+
+			const float Z = Heights[CY * Cells + CX];
+			for (int32 N = 0; N < 4; ++N)
+			{
+				const int32 AX = CX + NX[N], AY = CY + NY[N];
+				if (AX < 0 || AY < 0 || AX >= Cells || AY >= Cells) continue;
+				if (FMath::Abs(Heights[AY * Cells + AX] - Z) > Allow)
+				{
+					Nav.SetSolid(CX, CY, true);
+					++SolidCount;
+					break;
+				}
+			}
+		}
+	}
+
+	// 마지막에 한 번만 — 벽을 몸 반경만큼 부풀려 여유칸을 깐다
+	Nav.Inflate(NavAgentRadius);
+
+	Sim.SetNavGrid(&Nav);
+
+	const double Ms = (FPlatformTime::Seconds() - T0) * 1000.0;
+	UE_LOG(LogTemp, Warning,
+		TEXT("[FM][Nav] 베이크 완료 %dx%d칸 (셀 %.0fcm, 범위 %.0fcm) 벽 %d칸 — %.0fms"),
+		Cells, Cells, NavCellSize, Cells * NavCellSize, SolidCount, Ms);
+
+	LogSystem(FString::Printf(TEXT("지형 장애물 %d칸 (%.0fm 범위)"),
+		SolidCount, Cells * NavCellSize / 100.f));
+}
+
+void AFMSimManager::ClearNavGrid()
+{
+	Sim.SetNavGrid(nullptr);
+	Nav.Reset(Vec3{ 0.f, 0.f, 0.f }, 0.f, 0, 0);
+	UE_LOG(LogTemp, Warning, TEXT("[FM][Nav] 격자 비움 — 장애물 없음"));
+}
+
+bool AFMSimManager::IsNavWalkable(const FVector& WorldPos) const
+{
+	return Nav.IsWalkableAt(Vec3{ (float)WorldPos.X, (float)WorldPos.Y, 0.f });
+}
+
+void AFMSimManager::DrawNavGridDebug() const
+{
+	if (!Nav.Valid()) return;
+
+	UWorld* W = GetWorld();
+	if (!W) return;
+
+	// 카메라 주변만 그린다 — 14000칸을 전부 그리면 프레임이 통째로 날아간다
+	FVector Eye = GetActorLocation();
+	if (const APlayerController* PC = W->GetFirstPlayerController())
+	{
+		FVector  Loc;
+		FRotator Rot;
+		PC->GetPlayerViewPoint(Loc, Rot);
+		Eye = Loc;
+	}
+
+	const float  Cell = Nav.CellSize();
+	const float  R    = FMath::Max(Cell, NavDrawRadius);
+	const Vec3   Min  = Nav.MinCorner();
+
+	const int32 MinX = FMath::Max(0, FMath::FloorToInt((Eye.X - R - Min.x) / Cell));
+	const int32 MinY = FMath::Max(0, FMath::FloorToInt((Eye.Y - R - Min.y) / Cell));
+	const int32 MaxX = FMath::Min(Nav.Width()  - 1, FMath::CeilToInt((Eye.X + R - Min.x) / Cell));
+	const int32 MaxY = FMath::Min(Nav.Height() - 1, FMath::CeilToInt((Eye.Y + R - Min.y) / Cell));
+
+	const FVector Box(Cell * 0.45f, Cell * 0.45f, 2.f);
+
+	for (int32 CY = MinY; CY <= MaxY; ++CY)
+	for (int32 CX = MinX; CX <= MaxX; ++CX)
+	{
+		const bool bSolid = Nav.IsSolid(CX, CY);
+		const bool bWalk  = Nav.IsWalkable(CX, CY);
+		if (bWalk) continue;   // 걸을 수 있는 칸은 그리지 않는다 (대부분이라 화면이 덮인다)
+
+		const Vec3    C   = Nav.CellToWorld(CX, CY);
+		const FVector At(C.x, C.y, GroundZAt(C.x, C.y) + 6.f);
+
+		// 벽=빨강, 여유칸(벽은 아니지만 못 서는 칸)=주황
+		DrawDebugBox(W, At, Box, FQuat::Identity,
+			bSolid ? FColor(220, 40, 40) : FColor(230, 140, 30), false, -1.f, 0);
+	}
 }
 
 float AFMSimManager::GroundZAt(float X, float Y) const
