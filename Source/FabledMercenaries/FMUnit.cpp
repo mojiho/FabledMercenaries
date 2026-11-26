@@ -7,6 +7,8 @@
 #include "Animation/AnimSequenceBase.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/World.h"
+#include "TimerManager.h"            // 쓰러진 뒤 자세를 얼리는 타이머
 
 void AFMUnit::SetCommandReady(bool bReady)
 {
@@ -50,7 +52,20 @@ AFMUnit::AFMUnit()
 	static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> FallFinder(
 		TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Jump/MM_Fall_Loop.MM_Fall_Loop"));
 	if (FallFinder.Succeeded()) FallAnim = FallFinder.Object;
-	
+
+	// 쓰러지는 동작 기본값 — 정면에서 맞아 쓰러지는 3종.
+	// Sim의 OnDeath가 피격 방향을 안 넘겨주므로(uint64 id 하나뿐) 방향별로 고르지 못한다.
+	// 그래서 어느 방향에서 맞아도 어색하지 않은 정면 피격 쪽만 기본으로 둔다 —
+	// 방향별로 쓰러지게 하려면 Sim의 OnDeath 시그니처부터 바꿔야 하고, 그러면 서버 사본과 더 벌어진다.
+	static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> Death1(
+		TEXT("/Game/Characters/Mannequins/Anims/Death/MM_Death_Front_01.MM_Death_Front_01"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> Death2(
+		TEXT("/Game/Characters/Mannequins/Anims/Death/MM_Death_Front_02.MM_Death_Front_02"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> Death3(
+		TEXT("/Game/Characters/Mannequins/Anims/Death/MM_Death_Front_03.MM_Death_Front_03"));
+	if (Death1.Succeeded()) DeathAnims.Add(Death1.Object);
+	if (Death2.Succeeded()) DeathAnims.Add(Death2.Object);
+	if (Death3.Succeeded()) DeathAnims.Add(Death3.Object);
 }
 
 void AFMUnit::UpdateFromSim(const FVector& Loc, const FVector& FacingDir, EUnitAnim NewAnim, float DeltaSeconds)
@@ -73,6 +88,11 @@ void AFMUnit::UpdateFromSim(const FVector& Loc, const FVector& FacingDir, EUnitA
 			SetFadeAlpha(1.f);
 		}
 	}
+	// 래그돌로 넘어간 시체는 물리가 위치를 쥐고 있다. Mesh가 루트라 아래에서 SetActorLocation을
+	// 계속 부르면 매 프레임 시체를 Sim 자리로 순간이동시켜 사지가 경련하듯 떨린다.
+	// 페이드는 위에서 이미 끝냈다 — 여기서 빠져도 시체는 정상적으로 나타난다
+	if (Mesh && Mesh->IsSimulatingPhysics()) return;
+
 	const FVector VisLoc(Loc.X + CurrentEntranceOffset.X, Loc.Y + CurrentEntranceOffset.Y, Loc.Z);
 
 	// 속도 = (화면) 위치 변화량 / dt (이전 위치가 있을 때만)
@@ -194,6 +214,20 @@ void AFMUnit::PlayEntrance(const FVector& FromOffset, float RunTime, float Delay
 	bHasPrev              = false;   // 출발점으로 순간이동하는 첫 프레임을 '달리기'로 재지 않게
 	bHasVisualZ           = false;
 	SetFadeAlpha(0.f);
+
+	if (bCorpse)
+	{
+		// 지난 전투에서 죽어 시체로 스폰되는 용병. 여기서 자세를 안 잡으면
+		// 애님 그래프의 진입 상태에서 Dead로 가는 전이에만 의존하게 되고,
+		// 그 전이가 없으면 시체가 선 채로 전투를 구경한다
+		PlayDeathPose(/*bStartAtEnd*/ true);
+	}
+	else
+	{
+		// 액터가 전투 사이에 재사용될 수 있다 — 지난 전투에서 시체로 만들어 둔 걸 되돌린다.
+		// 안 하면 되살린 용병이 쓰러진 자세 그대로 미끄러져 다닌다
+		EndRagdoll();
+	}
 }
 
 void AFMUnit::SetFadeAlpha(float Alpha)
@@ -258,11 +292,102 @@ void AFMUnit::NotifyDamaged(bool bFromBehind, bool bCrit)
 	BP_OnDamaged(bFromBehind, bCrit);
 }
 
+bool AFMUnit::PlayDeathPose(bool bStartAtEnd)
+{
+	if (DeathAnims.Num() == 0 || !Mesh)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[FM] %s 사망 동작 없음 — DeathAnims %d개, Mesh %s (DeathMontage로 넘어감)"),
+			*GetName(), DeathAnims.Num(), Mesh ? TEXT("있음") : TEXT("없음"));
+		return false;
+	}
+
+	UAnimSequenceBase* Fall = DeathAnims[FMath::RandHelper(DeathAnims.Num())].Get();   // 연출용 — 결정성이 필요한 값이 아니다
+	if (!Fall) return false;
+
+	const float Len = Fall->GetPlayLength();
+
+	// 애님 그래프를 거치지 않고 이 동작만 직접 재생한다.
+	//
+	// 슬롯 몬타주로는 안 된다 — ABP_Unit이 DefaultSlot을 상체에만 블렌드해서(Layered Blend Per Bone)
+	// 다리는 선 채로 상체만 꺾인다. 실측값이 그대로 말해 준다: 골반Z=87(선 높이) 발Z=10(바닥) 머리Z=102.
+	// 전신 슬롯을 하나 추가하는 게 정석이지만 그건 그래프를 열어 고쳐야 하는 일이고,
+	// 시체는 애초에 그래프가 할 일이 없다. 통째로 끄는 편이 단순하고 확실하다
+	Mesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+
+	if (bStartAtEnd)
+	{
+		// 전투 시작부터 시체 — 쓰러지는 과정을 보여 줄 게 아니라 이미 끝나 있어야 한다
+		Mesh->SetAnimation(Fall);
+		Mesh->Stop();
+		Mesh->SetPosition(Len, /*bFireNotifies*/ false);
+	}
+	else
+	{
+		// 한 번 재생하고 마지막 프레임에 그대로 선다 (싱글 노드는 루프를 끄면 끝에서 멈춘다)
+		Mesh->PlayAnimation(Fall, /*bLooping*/ false);
+	}
+
+	// 동작이 끝나는 순간 물리로 넘긴다(또는 그 자세에서 멈춘다).
+	// 전투 시작부터 시체면 쓰러지는 과정을 보여 줄 게 아니니 곧바로
+	const float Hold = bStartAtEnd ? 0.05f : (Len + 0.05f);
+	GetWorldTimerManager().SetTimer(DeathFreezeTimer, this, &AFMUnit::OnDeathAnimEnd, Hold, false);
+
+	return true;
+}
+
 void AFMUnit::NotifyDeath()
 {
 	bDead = true;
-	PlayOneShot(DeathMontage);
+
+	// DeathAnims를 비워 뒀으면 예전 경로 — 몬타주가 있으면 그것, 없으면 애님 그래프 Dead 상태
+	if (!PlayDeathPose(/*bStartAtEnd*/ false))
+		PlayOneShot(DeathMontage);
+
 	BP_OnDeath();
+}
+
+void AFMUnit::StartRagdoll()
+{
+	if (!Mesh || Mesh->IsSimulatingPhysics()) return;
+
+	// 엔진 기본 Ragdoll 프로파일 — PhysicsBody로 WorldStatic(바닥)에만 부딪히고
+	// Visibility와 Pawn은 무시한다. 이 프로젝트의 바닥 높이 측정·장애물 판정·클릭이
+	// 전부 ECC_Visibility라서, 산 유닛이 시체를 밟고 올라서거나 시체에 길이 막히는 일이 없다
+	Mesh->SetCollisionProfileName(TEXT("Ragdoll"));
+	Mesh->SetSimulatePhysics(true);
+	Mesh->WakeAllRigidBodies();
+}
+
+void AFMUnit::EndRagdoll()
+{
+	if (!Mesh) return;
+
+	if (Mesh->IsSimulatingPhysics())
+	{
+		Mesh->SetSimulatePhysics(false);
+		Mesh->SetCollisionProfileName(TEXT("NoCollision"));   // 원래 설정 — 유닛은 충돌이 없다
+	}
+
+	Mesh->bPauseAnims = false;
+	if (Mesh->GetAnimationMode() != EAnimationMode::AnimationBlueprint)
+		Mesh->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+}
+
+void AFMUnit::OnDeathAnimEnd()
+{
+	if (!Mesh) return;
+
+	if (bRagdollOnDeath)
+	{
+		// 쓰러지는 동작이 선 자세로 끝나므로 여기서 물리에 넘긴다 — 나머지는 중력이 한다
+		StartRagdoll();
+		return;
+	}
+
+	// 끝까지 눕는 동작을 넣어 래그돌을 끈 경우. bPauseAnims는 '애니메이션 틱만' 멈추고
+	// 본은 계속 갱신한다 — 메시는 정상으로 보이고 자세만 고정된다.
+	// 시체는 더 움직일 일이 없으니 애님을 계속 돌릴 이유도 없다
+	Mesh->bPauseAnims = true;
 }
 
 void AFMUnit::NotifySkillCast(int32 SkillType)

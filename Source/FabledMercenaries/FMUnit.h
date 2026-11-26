@@ -55,8 +55,32 @@ public:
 	UPROPERTY(EditAnywhere, Category="Anim") TObjectPtr<UAnimMontage> AttackMontage;
 	UPROPERTY(EditAnywhere, Category="Anim") TObjectPtr<UAnimMontage> HitMontage;
 	UPROPERTY(EditAnywhere, Category="Anim") TObjectPtr<UAnimMontage> DeathMontage;
-	UPROPERTY(EditAnywhere, Category="Anim") TMap<int32, TObjectPtr<UAnimMontage>> SkillMontages; // 
-	
+	UPROPERTY(EditAnywhere, Category="Anim") TMap<int32, TObjectPtr<UAnimMontage>> SkillMontages; //
+
+	/**
+	 * 쓰러지는 동작. 여럿 넣으면 하나를 골라 재생한다(같은 자세로만 죽으면 눈에 띈다).
+	 *
+	 * 이걸 쓰는 이유: 쓰러지기를 애님 그래프의 Dead 상태에 맡기면 **지금 어느 상태였느냐에 따라
+	 * Dead로 가는 전이가 있어야** 한다. 상태를 하나 추가할 때마다 Dead 전이를 빼먹으면
+	 * 그 상태에서 죽은 유닛만 선 채로 굳는다 — 찾기 어려운 버그다.
+	 * 슬롯 몬타주는 그래프를 덮으므로 어느 상태에서 죽어도 똑같이 쓰러진다.
+	 *
+	 * 다 쓰러진 뒤에는 그 자세에서 애니메이션을 멈춘다 — 시체가 다시 일어서지 않는다.
+	 * 비워 두면 예전 경로(DeathMontage → 없으면 애님 그래프 Dead 상태)로 돌아간다.
+	 */
+	UPROPERTY(EditAnywhere, Category="Anim") TArray<TObjectPtr<UAnimSequenceBase>> DeathAnims;
+
+	/**
+	 * 쓰러지는 동작이 끝나면 물리로 넘겨 시체를 바닥에 눕힌다.
+	 *
+	 * 지금 기본값으로 쓰는 MM_Death_* 3종은 **선 채로 허리만 꺾인** 자세로 끝난다 —
+	 * 래그돌로 넘길 것을 전제로 만든 짧은 리액션이라 애니메이션만으로는 눕지 않는다.
+	 * 실측(애님 그래프를 끄고 전신에 적용한 마지막 프레임): 골반Z=88 머리Z=85 발Z=11.
+	 *
+	 * 끝까지 눕는 동작을 구해 DeathAnims에 넣으면 이걸 꺼서 물리 비용을 없앨 수 있다.
+	 */
+	UPROPERTY(EditAnywhere, Category="Anim") bool bRagdollOnDeath = true;
+
 	UPROPERTY(BlueprintReadOnly, Category="Unit") bool bDead = false;
 
 	// ── 수직 이동 (점프·낙하) ──
@@ -152,7 +176,29 @@ private:
 	bool bCommandReady = false;
 
 	void PlayOneShot(UAnimMontage* M, float Rate = 1.f);
-	
+
+	/**
+	 * 쓰러지는 동작을 슬롯 몬타주로 재생하고, 다 쓰러진 자세에서 애니메이션을 멈춘다.
+	 * bStartAtEnd면 마지막 꼬리만 재생한다 — 전투 시작부터 시체인 유닛은 쓰러지는 걸 보여 줄 게 아니라
+	 * 이미 쓰러져 있어야 한다. DeathAnims가 비어 있으면 아무것도 안 하고 false를 돌려준다.
+	 */
+	bool PlayDeathPose(bool bStartAtEnd);
+
+	/** 쓰러지는 동작이 끝나는 순간 — 물리로 넘기거나(bRagdollOnDeath) 그 자세에서 멈춘다 */
+	void OnDeathAnimEnd();
+	FTimerHandle DeathFreezeTimer;
+
+	/**
+	 * 메시를 물리로 넘긴다. Mesh가 루트라 이 뒤로는 물리가 액터 위치를 쥐므로
+	 * UpdateFromSim이 손을 떼야 한다 — 안 그러면 매 프레임 시체를 순간이동시킨다.
+	 * 충돌은 엔진의 Ragdoll 프로파일을 쓴다: Visibility를 무시하므로 바닥 트레이스·
+	 * 장애물 판정·클릭(전부 ECC_Visibility)에 시체가 안 걸리고, 바닥에만 떨어진다.
+	 */
+	void StartRagdoll();
+
+	/** 되살아난 용병을 원래대로 — 물리를 끄고 애님 그래프를 다시 켠다 */
+	void EndRagdoll();
+
 	FVector PrevLoc = FVector::ZeroVector;   // 속도 계산용 이전 위치
 	bool bHasPrev = false;
 
