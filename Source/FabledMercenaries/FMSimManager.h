@@ -79,6 +79,9 @@ public:
 	/** 특정 id 유닛의 월드 위치 (살아있을 때만) */
 	bool GetUnitWorldPos(uint64 Id, FVector& OutPos) const;
 	
+	/** 이번 턴이 막 찬 아군을 꺼낸다. 큐는 비워진다.*/
+	void ConsumeTurnReadyEvents(TArray<uint64>& Out);
+	
 	void ClearSelection();
 	
 	/** 여러 경유지로 이동 (예약 경로). 마지막 도착지에서 ArriveFacing 방향을 봄 */
@@ -465,6 +468,12 @@ private:
 	uint64 NextUnitId = 100;         // 유닛 id 발급기 (아바타는 1번대를 쓴다)
 	TArray<uint64> CombatUnitIds;    // 이번 인카운터로 스폰된 유닛 — 종료 시 이 목록만 지운다
 	TMap<uint64, uint32> UnitToMercId;   // 로스터에서 스폰된 유닛 id → 용병 id (전투 결과를 되돌려 적는 용도)
+	
+	/** 지난 프레임에 턴이 차있던 아군*/
+	TSet<uint64> TurnReadyLast;
+	
+	/** 이번에 막 턴이 돌아온 아군*/
+	TArray<uint64> TurnReadyQueue;
 
 	/**
 	 * Sim에 유닛 1기 + 화면 액터 1개를 만든다. 반환값은 발급된 id.

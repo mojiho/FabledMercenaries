@@ -101,8 +101,13 @@ void AFabledMercenariesPlayerController::SetupInputComponent()
 	InputComponent->BindKey(EKeys::RightMouseButton, IE_Released, this, &AFabledMercenariesPlayerController::OnRightClickReleased);
 
 	// 채팅 — Enhanced Input 액션을 따로 만들지 않고 키를 직접 묶는다(마우스와 같은 방식).
-	// 입력 중에는 텍스트 상자가 포커스를 쥐고 Enter를 먹으므로 여기로 오지 않는다.
-	// 숫자패드 Enter는 따로 없다 — 언리얼이 둘 다 EKeys::Enter로 넘긴다
+	// 숫자패드 Enter는 따로 없다 — 언리얼이 둘 다 EKeys::Enter로 넘긴다.
+	//
+	// 다만 이 경로는 '예비'다. 평소엔 WBP_Chat이 달아 둔 슬레이트 입력 전처리기가
+	// 위젯들보다 먼저 Enter를 잡아 처리하고 삼킨다 (UFMChatWidget::HandleGlobalKeyDown).
+	// HUD 버튼이 포커스를 쥐고 있거나 입력 모드가 UI Only여도 채팅이 열리게 하기 위한 것이고,
+	// 여기 묶인 키는 그 창이 아직 없을 때만 쓰인다. 전처리기가 처리하면 여기까지 오지 않으므로
+	// 두 번 발동할 일은 없다
 	InputComponent->BindKey(EKeys::Enter,  IE_Pressed, this, &AFabledMercenariesPlayerController::OnChatToggle);
 	InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &AFabledMercenariesPlayerController::OnChatCancel);
 
@@ -531,6 +536,57 @@ void AFabledMercenariesPlayerController::PlayerTick(float DeltaTime)
                 Cam->SetActorLocation(FMath::VInterpTo(Cur, Tgt, DeltaTime, 10.f));
             }
         }
+    	// ── 턴 연출: 턴이 찬 아군이 화면 밖이면 줌 아웃해서 담는다 ──
+    	// 줌 아웃은 화면에서 무언가를 '빼지' 않는다. 그래서 보고 있던 것·선택한 유닛은
+    	// 저절로 화면에 남고, 피봇과 각도는 건드릴 필요가 없다 — 붐 길이 하나만 움직인다
+    	if (AFM_CameraPawn* Cam = Cast<AFM_CameraPawn>(GetPawn()))
+    	{
+    		if (!SelMgr->IsInCombat() || SelMgr->IsEncounterIntroPlaying())
+    		{
+    			CamFocusUnits.Reset();
+    		}
+    		else
+    		{
+    			// 연출 중이 아닐 때만 새 대상을 받는다.
+    			// 연출 중에 받으면 중간에 대상이 갈려서 줌이 떤다
+    			if (!Cam->IsExpanding())
+    			{
+    				CamFocusUnits.Reset();
+    				SelMgr->ConsumeTurnReadyEvents(CamFocusUnits);
+    			}
+
+    			// 대상들의 '지금' 좌표. 위의 추적 코드가 피봇을 매 프레임 움직이고
+    			// 대상도 걸어가므로, 한 번 잰 값은 다음 프레임에 이미 낡는다
+    			// 유닛 키(cm). GetUnitWorldPos는 발밑을 주는데, 내려다보는 카메라에서는
+    			// 머리가 발밑보다 화면 위쪽에 맺힌다 — 발밑만 넣으면 머리가 잘린다
+    			constexpr float UnitHeadHeight = 180.f;
+
+    			TArray<FVector> Pts;
+    			for (uint64 Id : CamFocusUnits)
+    			{
+    				FVector P;
+    				if (SelMgr->GetUnitWorldPos(Id, P))   // 죽어 사라진 id는 여기서 조용히 빠진다
+    				{
+    					// 화면 아래쪽에 걸리면 반대로 발이 잘린다. 둘 다 넣고 심한 쪽에 맞춘다
+    					Pts.Add(P);
+    					Pts.Add(P + FVector(0.f, 0.f, UnitHeadHeight));
+    				}
+    			}
+
+    			if (Pts.Num() > 0)
+    			{
+    				if (Cam->IsExpanding())
+    				{
+    					Cam->RaiseExpandTarget(Pts);
+    				}
+    				else if (!Cam->TryExpandToInclude(Pts))
+    				{
+    					// 이미 화면 안이다 / ZoomMax로도 안 들어온다 / 쿨다운 중 — 이번 건은 버린다
+    					CamFocusUnits.Reset();
+    				}
+    			}
+    		}
+    	}
     }
 
     // ── 스킬 대상 지정 중: 커서 바닥에 조준 표시 ──

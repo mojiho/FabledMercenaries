@@ -66,6 +66,35 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|FX")
 	TObjectPtr<class UMaterialInterface> OutlineMaterial;
 
+	/** 카메라 연출 튜닝값*/
+	UPROPERTY(EditAnywhere, Category = "Camera|TurnFocus") float ExpandOutTime  = 0.40f;
+	UPROPERTY(EditAnywhere, Category = "Camera|TurnFocus") float ExpandHoldTime = 0.60f;
+	UPROPERTY(EditAnywhere, Category = "Camera|TurnFocus") float ExpandBackTime = 0.50f;
+	UPROPERTY(EditAnywhere, Category = "Camera|TurnFocus") float ExpandCooldown = 2.00f;
+
+	/** 화면 안쪽 안전 비율. 1.0이면 정가장자리에 1픽셀 걸친 것도 '보인다'로 친다 */
+	UPROPERTY(EditAnywhere, Category = "Camera|TurnFocus") float SafeFrac = 0.75f;
+
+	/**
+	 * 턴 연출이 벌릴 수 있는 최대 붐 길이. ZoomMax(휠 한계)와 일부러 따로 둔다 —
+	 * 연출은 '멀리 있는 유닛을 담는다'는 요구가 있고 휠은 조작감이 걸려 있어 기준이 다르다.
+	 * 연출이 끝나면 원래 길이로 돌아오므로 이 값이 휠 범위를 넓히지는 않는다.
+	 * ZoomMax보다 작게 두면 연출이 휠보다 좁아진다 — 그럴 이유는 보통 없다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Camera|TurnFocus") float ExpandArmMax = 2400.f;
+	
+private:
+	enum class EExpandState : uint8 { Idle, Out, Hold, Back };
+
+	/** 점들이 다 화면에 들어오는 최소 붐 길이. 음수면 지금도 충분히 보인다는 뜻 */
+	float ComputeRequiredArm(const TArray<FVector>& Points) const;
+
+	EExpandState ExpandState   = EExpandState::Idle;
+	float ExpandFrom    = 0.f;   // 연출 전 붐 길이 — 복귀 목표
+	float ExpandTo      = 0.f;   // 확장 목표
+	float ExpandElapsed = 0.f;
+	float CooldownLeft  = 0.f;
+	
 public:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
@@ -80,4 +109,17 @@ public:
 	void OrbitCamera(FVector2D ScreenDelta);
 
 	void RotateCamera(float AxisValue);   // QE 회전
+	
+	/** 월드에 점들이 화면에 들어오도록 줌아웃을 시작한다.
+	 *  이미 다 보이거나, ZoomMax로 해도 안들어오면 아무것도 하지 않고 False
+	 */
+	bool TryExpandToInclude(const TArray<FVector>& Points);
+	
+	/** 확장 연출 중 목표 갱신 - 대상이 움직여도 따라간다. 줄어들지 않는다. */
+	void RaiseExpandTarget(const TArray<FVector>& Points);
+	
+	bool IsExpanding() const {return ExpandState  != EExpandState::Idle;}
+	
+	/** 플레이어가 조작할땐 연출을 포기한다*/
+	void AbortExpand();
 };

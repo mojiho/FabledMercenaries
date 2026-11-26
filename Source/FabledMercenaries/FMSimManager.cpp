@@ -579,6 +579,10 @@ bool AFMSimManager::IsEncounterIntroPlaying() const
 
 void AFMSimManager::EndEncounter()
 {
+	// 전투가 끝나면 유닛이 Sim에서 사라진다 — 죽은 id가 남으면 다음 전투에서 오동작한다
+	TurnReadyLast.Empty();
+	TurnReadyQueue.Empty();
+	
 	if (!bInCombat) return;
 
 	// 전투 결과를 로스터에 기록 — 유닛을 Sim에서 지우기 전에 해야 한다
@@ -721,8 +725,28 @@ void AFMSimManager::Tick(float DeltaSeconds)
 			(*Found)->UpdateFromSim(FloorLoc, FacingDir, ToAnim(U.GetActionState()), DeltaSeconds);
 
 			// 턴테이블이 돈 아군만 외곽선. 탐험 중(turnMax==0)에는 늘 명령 가능하므로 표시하지 않는다
-			(*Found)->SetCommandReady(bInCombat && U.alive && U.turnMax > 0.f
-				&& U.faction == Faction::Player && U.TurnReady());
+			const bool bReady = bInCombat && U.alive && U.turnMax > 0.f
+				&& U.faction == Faction::Player && U.TurnReady();
+			(*Found)->SetCommandReady(bReady);
+			
+			// 알릴 조건은 '턴이 찼다'가 아니라 '턴이 찼고 지금 명령을 받을 수 있다'다.
+			// 이미 지시가 있는 유닛은 알리지 않는다 — 허용하면 카메라 연출이 난잡해진다.
+			//
+			// 이 조건을 엣지로 쓰는 게 핵심이다. 턴은 행동 중에도 차므로(의도된 설계)
+			// bReady만 엣지로 보면, 멀리 보낸 유닛은 거의 항상 걸어가는 중에 턴이 차고
+			// 그 순간 executing이라 버려진다. 그런데 bReady는 그 뒤로 계속 true여서
+			// 두 번째 엣지가 영원히 오지 않는다 — 도착해도 아무도 알려 주지 않았다
+			const bool bNotify = bReady && !U.executing && U.reserveQueue.empty();
+
+			const bool bWasNotify = TurnReadyLast.Contains(Pair.first);
+			if (bNotify && !bWasNotify)
+			{
+				TurnReadyLast.Add(Pair.first);
+				TurnReadyQueue.Add(Pair.first);
+				UE_LOG(LogTemp, Warning, TEXT("[FM][DBG] TurnReady 알림 id=%llu"), Pair.first);
+			}
+			else if (!bNotify && bWasNotify)
+				TurnReadyLast.Remove(Pair.first);
 
 			// 등장 연출로 달려오는 중엔 발밑 링/HP바를 그리지 않는다 — Sim 자리(진형)에 빈 링이 먼저 떠 보이므로
 			if (!(*Found)->GetEntranceOffset().IsNearlyZero()) continue;
@@ -1412,4 +1436,10 @@ const struct FFMWeaponVisual* AFMSimManager::FindWeaponVisual(uint32 ItemId) con
 	for (const FFMWeaponVisual* Row : Rows)
 		if (Row && Row->ItemId == (int32)ItemId) return Row;
 	return nullptr;
+}
+
+void AFMSimManager::ConsumeTurnReadyEvents(TArray<uint64>& Out)
+{
+	Out = MoveTemp(TurnReadyQueue);
+	TurnReadyQueue.Reset();
 }

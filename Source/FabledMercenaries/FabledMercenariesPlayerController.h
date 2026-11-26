@@ -224,6 +224,9 @@ protected:
 	bool    bWorldDragMove     = false;                 // 월드맵에서 땅을 누른 채 끌고 있는 중
 	float   WorldDragTimer     = 0.f;                   // 마지막 목적지 갱신 이후 경과 시간
 	FVector WorldDragLastPoint = FVector::ZeroVector;   // 마지막으로 보낸 목적지
+	
+	/** 지금 화면에 넣으려는 턴 유닛들. 연출 중 위치를 다시 읽기 위해 들고 있는다 */
+	TArray<uint64> CamFocusUnits;
 };
 
 
